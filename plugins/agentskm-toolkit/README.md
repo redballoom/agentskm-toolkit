@@ -1,9 +1,16 @@
 # AgentsKM Toolkit Plugin
 
-Installable Codex plugin root for `agentskm-toolkit`.
+Self-contained Codex plugin for a separately cloned AgentsKM vault.
 
-This folder is the source path referenced by `bundles/marketplace.json` and
-`.agents/plugins/marketplace.json`.
+The package includes the knowledge-capture Skill, KM CLI, and stdio MCP
+adapter. Bind a vault once with the `km_configure_vault` MCP tool or:
+
+```powershell
+python tools/km-cli/km.py configure --vault D:\path\to\agentskm-vault
+```
+
+The binding is stored in `%USERPROFILE%\.agentskm\config.json`. The plugin
+never bundles or uploads live knowledge data.
 
 This plugin expects the reusable toolkit repository and the knowledge vault to
 be split:

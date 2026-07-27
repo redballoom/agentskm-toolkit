@@ -1,7 +1,7 @@
 # Agent Knowledge Protocol
 
-> 版本：v0.1  
-> 日期：2026-07-25  
+> 版本：v0.2
+> 日期：2026-07-27
 > 适用范围：Codex、Claude Code、Cursor、HermesBot、影刀及其他接入 AgentsKM 的 Agent  
 > 核心原则：Agent 可以自动发现和提交候选；正式 Wiki 写入必须经过用户批准或预授权规则
 
@@ -9,8 +9,9 @@
 
 | 角色 | 允许操作 | 禁止操作 |
 |---|---|---|
-| 贡献者 Agent | 搜索 Wiki/Inbox/Raw；提出候选；写入 `000_Inbox/` | 直接写入 `wiki/`；修改 `purpose.md` / `SCHEMA.md` |
-| 编译者 Agent | 在批准范围内毕业或合并候选；更新 `wiki/`、`index.md`、`log.md` | 扩大用户批准范围；保存敏感凭证 |
+| 贡献者 Agent | 搜索 Wiki/Inbox/Raw；通过 `km propose` 提交候选 | 审批、毕业、合并或直接编辑 Markdown |
+| 审核者 Agent | 贡献者能力；记录提醒、批准、稍后和忽略决定 | 写入正式 Wiki |
+| 编译者 Agent | 审核者能力；在批准范围内毕业或合并候选 | 扩大用户批准范围；保存敏感凭证 |
 | 巡检者 Agent | 检查断链、重复、过时、来源缺失；生成报告 | 默认不自动改正式知识 |
 | 用户 | 批准毕业、拒绝、暂缓、仲裁冲突、修改宪法级规则 | 无 |
 
@@ -84,7 +85,7 @@ fingerprint: sha256-of-normalized-topic-and-claims
 pending
   -> reminded
     -> approved -> graduated | merged
-    -> snoozed
+    -> snoozed -> reminded
     -> rejected
   -> duplicate -> merged | rejected
   -> pending-source-review
@@ -99,7 +100,7 @@ pending
 | `approved` | 用户已批准毕业或合并 |
 | `graduated` | 已创建正式 Wiki 页 |
 | `merged` | 已合并到现有 Wiki 页 |
-| `snoozed` | 暂缓处理 |
+| `snoozed` | 暂缓处理；到 `snoozed_until` 后由 `km reminders` 再次返回 |
 | `rejected` | 明确不沉淀 |
 | `duplicate` | 与已有候选或 Wiki 重复 |
 | `pending-source-review` | 有价值但来源不足，需补证据 |
@@ -123,8 +124,9 @@ Agent 提醒用户时使用这个最小格式：
 
 从 Inbox 到 Wiki 必须满足：
 
+- 候选状态已经通过 `km review --decision approve` 进入 `approved`。
 - 用户明确批准，或命中用户提前授权的具体自动化规则。
-- `source_refs` 至少有一项，或者候选本身是对话内可追溯的审计记录。
+- `source_refs` 至少有一项；纯对话知识使用 `conversation:<task-or-session-id>`。
 - 不包含密钥、token、客户隐私、个人敏感信息。
 - 目标路径位于 `wiki/entities/`、`wiki/concepts/`、`wiki/comparisons/` 或 `wiki/queries/`。
 - `index.md` 和 `log.md` 同步更新。
@@ -145,8 +147,10 @@ Agent 提醒用户时使用这个最小格式：
 
 KM CLI 完成后：
 
-- 所有写入通过 `km propose`、`km promote`、`km lint` 执行。
+- 所有写入通过 `km propose`、`km review`、`km promote`、`km merge` 和 `km dashboard` 执行。
 - Agent 或适配层需要机器输出时，应调用 `--json`。
+- MCP 启动时固定为 `contributor`、`reviewer` 或 `compiler`，并按角色隐藏工具。
+- CLI 对写命令再次检查 `--actor-role`，避免只依赖工具可见性。
 - CLI 负责文件锁、事务、幂等和审计。
 - MCP、HTTP、Obsidian CLI 都只能作为薄适配层调用 KM CLI。
 - HTTP 适配器只允许本机监听，默认 `127.0.0.1`，不得作为公网服务暴露。
@@ -158,7 +162,8 @@ KM CLI 完成后：
 
 截至 2026-07-25：
 
-- Codex 可在本仓库改造期临时扮演编译者 Agent。
+- Codex 插件默认是可信的本机编译者；其 Skill 必须先询问用户再批准和毕业。
+- Claude Code、Cursor 和其他新接入 Agent 默认使用贡献者角色。
 - `lingxing-api-auth.md` 已批准毕业。
 - `wsl-chrome-cdp-setup.md` 已批准毕业。
 - `ai-agent-platform-comparison-2025.md` 暂缓毕业，需补来源。

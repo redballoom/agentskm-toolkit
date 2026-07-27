@@ -1,5 +1,15 @@
 # AgentsKM 架构改造执行计划
 
+## 执行状态（2026-07-27）
+
+- M1 内容基线：完成。
+- M2 本地闭环：完成；CLI 已支持查询、候选、提醒、审核、稍后、拒绝、毕业和合并。
+- M3 多 Agent 接入：完成首轮；Codex 自包含插件与 Claude/Cursor contributor MCP 配置已通过验收。
+- M4 规模化维护：部分完成；基础 Lint 和端到端临时 Vault 验收已建立，qmd 继续按规模阈值延后。
+
+当前可执行协议以 `docs/agent-knowledge-protocol.md` v0.2 和
+`docs/operations-runbook.md` 为准。下列原始任务清单保留为设计审计记录，未逐项回填的复选框不代表功能未实现。
+
 > 版本：v2.0-draft  
 > 日期：2026-07-25  
 > 状态：待执行  

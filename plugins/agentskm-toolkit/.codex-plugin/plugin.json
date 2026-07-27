@@ -1,7 +1,7 @@
 {
   "name": "agentskm-toolkit",
-  "version": "0.1.0",
-  "description": "AgentsKM toolkit bundle with CLI-backed MCP tools and review surfaces.",
+  "version": "0.2.0",
+  "description": "Multi-agent local knowledge capture, review, and promotion workflow.",
   "author": {
     "name": "Red Balloon"
   },
@@ -12,16 +12,25 @@
     "mcp",
     "obsidian"
   ],
+  "homepage": "https://github.com/redballoom/agentskm-toolkit",
+  "repository": "https://github.com/redballoom/agentskm-toolkit",
+  "license": "MIT",
+  "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "AgentsKM Toolkit",
     "shortDescription": "Local knowledge-base toolkit for multi-agent capture and review.",
-    "longDescription": "A thin Codex plugin wrapper around the AgentsKM CLI, MCP adapter, HTTP adapter, dashboard, and runbook. The plugin keeps all rules in the repository's canonical CLI and protocol docs.",
+    "longDescription": "Captures reusable knowledge from conversations into a private local Inbox, records user review decisions, and promotes or merges approved candidates through a deterministic CLI-backed MCP server.",
     "developerName": "Red Balloon",
     "category": "Productivity",
     "capabilities": [
       "Interactive",
       "Write"
+    ],
+    "defaultPrompt": [
+      "检查本次对话是否有值得沉淀的知识。",
+      "查看知识库中到期的待审核候选。",
+      "搜索知识库里已有的相关经验。"
     ]
   }
 }

@@ -1,0 +1,7 @@
+interface:
+  display_name: "AgentsKM 知识沉淀"
+  short_description: "自动发现、审核并沉淀多个 Agent 对话中的可复用技术与流程知识"
+  default_prompt: "使用 $agentskm-capture 检查本次对话是否有值得沉淀的知识。"
+
+policy:
+  allow_implicit_invocation: true

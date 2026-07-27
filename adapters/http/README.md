@@ -1,25 +1,20 @@
 # AgentsKM HTTP Adapter
 
-Thin localhost HTTP adapter over `tools/km-cli/km.py --json`.
-
-Start:
+Optional localhost adapter over the KM CLI. A Bearer Token is mandatory for
+all write endpoints.
 
 ```powershell
-python adapters/http/km_http.py --host 127.0.0.1 --port 8765
+$env:AGENTSKM_HTTP_TOKEN="generate-a-local-secret"
+python adapters/http/km_http.py --host 127.0.0.1 --port 8765 --role contributor
 ```
 
-Endpoints:
+Read endpoints: `/health`, `/status`, `/pending`, `/reminders`, `/search`,
+`/validate`, and `/lint`.
 
-| Method | Path | Maps to |
-|---|---|---|
-| `GET` | `/health` | Adapter health |
-| `GET` | `/status` | `km status --json` |
-| `GET` | `/pending` | `km pending --json` |
-| `GET` | `/search?q=...&limit=10` | `km search ... --json` |
-| `GET` | `/validate` | `km validate --json` |
-| `GET` | `/lint` | `km lint --json` |
-| `POST` | `/propose` | `km propose ... --json` |
-| `POST` | `/promote` | `km promote ... --json` |
+Write endpoints: `/propose`, `/review`, `/promote`, and `/merge`. Send:
 
-The adapter must remain thin. All validation, role boundaries, locks, transactions, and promotion rules live in the KM CLI.
+```text
+Authorization: Bearer <AGENTSKM_HTTP_TOKEN>
+```
 
+Do not expose this adapter to a public network.

@@ -1,12 +1,17 @@
 # Runtime / local data
 .km/
-.agents/
 .obsidian/
 000_Inbox/
 raw/
 wiki/
 index.md
 log.md
+
+# Keep the repository marketplace manifest only
+.agents/*
+!.agents/plugins/
+.agents/plugins/*
+!.agents/plugins/marketplace.json
 
 # Python
 __pycache__/

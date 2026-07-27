@@ -38,6 +38,11 @@ User input → 000_Inbox/ (implicit-capture) → review + dedup → wiki/concept
 - All auto-captured pages land in `000_Inbox/` with tag `implicit-capture`
 - After review and de-duplication against existing wiki pages, graduate to `wiki/`
 - Orphan inbox pages are surfaced in lint reports
+- Inbox states are `pending`, `pending-source-review`, `reminded`, `snoozed`,
+  `approved`, `graduated`, `merged`, and `rejected`.
+- Conversation-derived evidence uses `conversation:<task-or-session-id>` in
+  `source_refs`; do not store full transcripts by default.
+- Only `approved` candidates may be promoted or merged by a compiler role.
 
 ## Frontmatter
   ```yaml

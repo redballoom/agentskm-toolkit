@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Render an AgentsKM MCP configuration for non-Codex agent hosts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+MCP = ROOT / "adapters" / "mcp" / "km_mcp.py"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--agent", choices=["claude", "cursor", "generic"], required=True)
+    parser.add_argument("--vault", required=True)
+    parser.add_argument("--role", choices=["contributor", "reviewer", "compiler"], default="contributor")
+    parser.add_argument("--output")
+    args = parser.parse_args()
+
+    vault = Path(args.vault).expanduser().resolve()
+    if not (vault / "000_Inbox").is_dir() or not (vault / "wiki").is_dir():
+        parser.error(f"Not an AgentsKM vault: {vault}")
+
+    config = {
+        "mcpServers": {
+            "agentskm": {
+                "command": "python",
+                "args": [str(MCP), "--role", args.role],
+                "env": {
+                    "AGENTSKM_DATA_ROOT": str(vault),
+                    "PYTHONUTF8": "1",
+                },
+            }
+        }
+    }
+    text = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
+    if args.output:
+        output = Path(args.output).expanduser().resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text, encoding="utf-8", newline="\n")
+        print(f"Wrote {args.agent} MCP config: {output}")
+    else:
+        print(text, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -3,7 +3,9 @@
     "agentskm": {
       "command": "python",
       "args": [
-        "../../adapters/mcp/km_mcp.py"
+        "./adapters/mcp/km_mcp.py",
+        "--role",
+        "compiler"
       ]
     }
   }

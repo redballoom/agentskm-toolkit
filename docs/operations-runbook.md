@@ -1,170 +1,103 @@
 # AgentsKM Operations Runbook
 
-> 日期：2026-07-25  
-> 目标：让用户和各类 Agent 用同一套步骤查询、捕获、审核、毕业和验收知识库。
+> 日期：2026-07-27
 
-## 1. 日常查询
+## 1. 安装与绑定
 
-优先查正式 Wiki：
+Toolkit 和 Vault 分开克隆。首次绑定：
+
+```powershell
+python tools\km-cli\km.py configure --vault D:\path\to\agentskm-vault
+python tools\km-cli\km.py status
+```
+
+也可以设置 `AGENTSKM_DATA_ROOT` 覆盖持久配置。
+
+## 2. 日常查询
 
 ```powershell
 python tools\km-cli\km.py search "领星 API 鉴权"
-```
-
-机器调用使用 JSON：
-
-```powershell
-python tools\km-cli\km.py search "领星 API 鉴权" --limit 3 --json
-```
-
-判断结果时：
-
-- `[wiki]` 是已审核正式知识。
-- `[inbox]` 是候选或审计记录，必须看 `status`。
-- `[raw]` 是原始证据，不直接作为最终结论。
-
-## 2. 查看待审
-
-```powershell
 python tools\km-cli\km.py pending
+python tools\km-cli\km.py reminders
 ```
 
-当前 Obsidian 审核面板：
+查询优先返回 Wiki。Inbox 必须标记为未审核，Raw 只作为证据。
 
-```powershell
-python tools\km-cli\km.py dashboard
-```
+## 3. 对话捕获
 
-打开：
-
-```text
-docs/review-dashboard.md
-```
-
-## 3. 提交候选
-
-Agent 发现可复用知识时，先进入 Inbox：
+Agent 在回答前发现可复用结论时：
 
 ```powershell
 python tools\km-cli\km.py propose `
   --title "候选标题" `
-  --type concept `
-  --tags "api,auth" `
-  --source-ref raw/articles/example.md `
-  --suggested-target wiki/concepts/example.md `
-  --value-reason "这条知识可跨项目复用" `
-  --body "候选正文"
+  --value-reason "这条结论可跨项目复用" `
+  --source-ref "conversation:task-id" `
+  --suggested-target "wiki/concepts/example.md" `
+  --actor-role contributor
+
+python tools\km-cli\km.py review 000_Inbox/example.md `
+  --decision remind `
+  --actor-role reviewer
 ```
 
-只预览不写入：
+然后询问用户：`沉淀 / 稍后 / 忽略`。
+
+## 4. 用户决定
+
+沉淀：
 
 ```powershell
-python tools\km-cli\km.py propose `
-  --title "候选标题" `
-  --value-reason "验证" `
-  --dry-run `
-  --json
-```
+python tools\km-cli\km.py review 000_Inbox/example.md `
+  --decision approve --reviewed-by user --actor-role reviewer
 
-## 4. 毕业到 Wiki
-
-毕业必须有明确批准范围：
-
-```powershell
 python tools\km-cli\km.py promote 000_Inbox/example.md `
-  --target wiki/concepts/example.md `
   --approved-by user `
-  --scope "用户明确批准：沉淀该候选为正式知识"
+  --scope "用户批准该候选毕业" `
+  --actor-role compiler
 ```
 
-`promote` 会拒绝：
+目标已有页面时改用 `km merge --target <existing-wiki-page>`。
 
-- 已经 `graduated` / `merged` / `rejected` 的候选。
-- `sensitivity: secret` 的候选。
-- 缺少 `source_refs` 的候选。
-- 目标路径不在 `wiki/entities/`、`wiki/concepts/`、`wiki/comparisons/`、`wiki/queries/` 下。
-
-## 5. HTTP 接入
-
-启动本机 HTTP 适配器：
+稍后：
 
 ```powershell
-python adapters\http\km_http.py --host 127.0.0.1 --port 8765
+python tools\km-cli\km.py review 000_Inbox/example.md `
+  --decision snooze --until 2026-08-03 `
+  --reviewed-by user --actor-role reviewer
 ```
 
-常用接口：
-
-```text
-GET  /status
-GET  /pending
-GET  /search?q=领星 API 鉴权&limit=1
-POST /propose
-POST /promote
-```
-
-HTTP 适配器只做参数翻译，所有规则仍由 KM CLI 执行。
-
-## 6. MCP 接入
-
-MCP server 配置示例：
-
-```json
-{
-  "mcpServers": {
-    "agentskm": {
-      "command": "python",
-      "args": ["D:/AgentsKM/adapters/mcp/km_mcp.py"]
-    }
-  }
-}
-```
-
-暴露工具：
-
-```text
-km_status
-km_pending
-km_search
-km_validate
-km_lint
-km_propose_capture
-km_promote_candidate
-km_dashboard
-```
-
-MCP 适配器只调用 `km.py --json`，不直接操作 Markdown。
-
-## 7. 健康检查
+忽略：
 
 ```powershell
+python tools\km-cli\km.py review 000_Inbox/example.md `
+  --decision reject --reviewed-by user --actor-role reviewer
+```
+
+Inbox 审计记录不删除。
+
+## 5. 多 Agent
+
+- Codex 插件：自包含 Skill、CLI 和 compiler MCP。
+- Claude Code/Cursor：使用 `scripts/render_mcp_config.py` 生成 contributor 配置。
+- 只有明确需要执行审批结果的可信宿主才配置 compiler。
+- 拥有不受限 Shell 的 Agent 仍属于操作系统信任边界；MCP 角色不能替代系统权限隔离。
+
+## 6. HTTP
+
+```powershell
+$env:AGENTSKM_HTTP_TOKEN="local-secret"
+python adapters\http\km_http.py --host 127.0.0.1 --port 8765 --role contributor
+```
+
+所有 POST 请求必须携带 `Authorization: Bearer <token>`。不要监听公网地址。
+
+## 7. 验收
+
+```powershell
+python scripts\build_plugin.py --check
 python tools\km-cli\km.py validate
 python tools\km-cli\km.py lint
 python tests\acceptance\test_km_workflow.py
-python tools\km-cli\km.py qmd-readiness
 ```
 
-验收通过时应看到：
-
-```text
-Validation passed.
-Lint passed.
-Acceptance workflow passed.
-```
-
-## 8. 故障定位
-
-| 现象 | 优先检查 |
-|---|---|
-| 搜不到正式知识 | `python tools\km-cli\km.py search "关键词" --json` |
-| 候选无法毕业 | 候选是否有 `source_refs`，是否 `sensitivity: secret`，是否已终态 |
-| Dashboard 过时 | 运行 `python tools\km-cli\km.py dashboard` |
-| qmd 是否该启用 | 运行 `python tools\km-cli\km.py qmd-readiness`，看阈值与固定查询命中率 |
-| HTTP 不通 | 先查 `/health`，再确认端口只监听 `127.0.0.1` |
-| MCP 工具不可见 | 先运行 `python adapters\mcp\km_mcp.py` 冒烟测试，确认配置路径是绝对路径 |
-| 写入中断 | 查看 `.km/transactions/`，失败事务会记录 touched 文件和 rollback 结果 |
-
-## 9. 当前已知事项
-
-- `000_Inbox/ai-agent-platform-comparison-2025.md` 仍是 `pending-source-review`，需要补来源后才能毕业。
-- `.km/` 是本地事务、锁和缓存目录，不提交 Git。
-- `C:\Users\redballoon\.config\git\ignore` 当前有用户级 Git 权限警告，不影响仓库内校验。
+验收测试只在临时 Vault 中执行写入。
