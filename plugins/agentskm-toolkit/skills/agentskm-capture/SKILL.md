@@ -1,17 +1,35 @@
 ---
 name: agentskm-capture
-description: Manage a local AgentsKM knowledge vault during technical and workflow conversations. Use when a conversation may contain reusable solutions, debugging paths, architecture decisions, tool comparisons, operating procedures, corrections to existing knowledge, or when the user asks to search, remember, defer, ignore, review, merge, or promote knowledge in AgentsKM.
+description: Set up and manage a local AgentsKM knowledge vault during technical and workflow conversations. Use when AgentsKM is newly installed or unconfigured, when an Agent Profile or Vault connection must be checked, or when a conversation may contain reusable solutions, debugging paths, architecture decisions, tool comparisons, operating procedures, corrections to existing knowledge, or the user asks to search, remember, defer, ignore, review, merge, or promote knowledge.
 ---
 
 # AgentsKM Capture
 
 Use the `agentskm` MCP tools. Treat Wiki as reviewed knowledge, Inbox as unreviewed candidates, and Raw as evidence.
 
+## Setup And Bootstrap
+
+When `km_setup_status` is available, call it before the first knowledge-base operation in a new installation or after a setup-related error.
+
+If it reports `configured: true`, use the normal tools exposed for the selected Profile. Do not ask the user to configure the Vault again.
+
+If only `km_setup_status` and `km_setup_instructions` are available, the MCP server is intentionally in read-only Bootstrap mode:
+
+1. Call both tools and explain the reported state.
+2. Reuse an existing configured Vault when one is listed. Otherwise ask for the absolute path of an existing AgentsKM Vault.
+3. Use the Profile requested by the host. Recommend `contributor` for Hermes, Claude, Cursor, automation, and other new Agents. A `compiler` Profile requires explicit user confirmation.
+4. Show the exact Profile, role, Vault name, Vault path, and config path that Setup will change.
+5. Ask for confirmation before changing the user configuration.
+6. After confirmation, use a local shell to run the bundled `km.py setup` CLI reported by `km_setup_instructions`. Use `--confirm-compiler` only when the user explicitly approved a Compiler Profile.
+7. Report the CLI result and ask the user to restart the Agent or reconnect the MCP server. Do not claim the full tool set is active in the current MCP process.
+
+The CLI is the only Setup writer. Never edit `%USERPROFILE%/.agentskm/config.json` directly and never invent an MCP configuration-writing call. Repeated Setup is idempotent; an existing conflicting Profile must be shown to the user rather than overwritten.
+
 ## Start Of Work
 
 1. Search Wiki when the task could benefit from prior reusable knowledge.
 2. Clearly label Inbox results as unreviewed.
-3. Continue normally if AgentsKM is unavailable; mention the missing connection only when it affects the requested workflow.
+3. If AgentsKM is unavailable because Setup is incomplete, follow the Bootstrap flow instead of guessing a Vault path.
 
 ## Capture Decision
 

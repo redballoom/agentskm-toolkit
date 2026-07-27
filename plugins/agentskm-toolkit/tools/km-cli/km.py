@@ -19,32 +19,26 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from km_config import (
+    RuntimeContext,
+    default_config,
+    get_config_path,
+    inspect_setup,
+    is_legacy_config,
+    read_json,
+    resolve_runtime,
+    validate_config,
+    vault_is_valid,
+)
+
 
 TOOL_ROOT = Path(__file__).resolve().parents[2]
-CONFIG_PATH = Path(
-    os.environ.get("AGENTSKM_CONFIG", Path.home() / ".agentskm" / "config.json")
-).expanduser().resolve()
-
-
-def configured_data_root() -> Path:
-    explicit = os.environ.get("AGENTSKM_DATA_ROOT")
-    if explicit:
-        return Path(explicit).expanduser().resolve()
-    if CONFIG_PATH.exists():
-        try:
-            config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"Invalid AgentsKM config: {CONFIG_PATH}: {exc}") from exc
-        vault = config.get("vault")
-        if isinstance(vault, str) and vault.strip():
-            return Path(vault).expanduser().resolve()
-    return TOOL_ROOT
-
-
-ROOT = configured_data_root()
+CONFIG_PATH = get_config_path()
+ROOT = TOOL_ROOT
 KM_DIR = ROOT / ".km"
 LOCK_DIR = KM_DIR / "locks"
 TX_DIR = KM_DIR / "transactions"
+RUNTIME: RuntimeContext | None = None
 SKIP_DIRS = {".git", ".obsidian", ".learnings", ".km"}
 WIKI_DIRS = {
     "entity": "wiki/entities",
@@ -161,16 +155,28 @@ def ensure_vault_root() -> None:
     if all(path.is_dir() for path in required):
         return
     raise RuntimeError(
-        "AgentsKM vault is not configured. Run `km configure --vault <path>` "
-        "or set AGENTSKM_DATA_ROOT."
+        "AgentsKM vault is not configured. Run `km setup-status --json`, then "
+        "complete `km setup`."
     )
 
 
 def actor_role(args: argparse.Namespace) -> str:
-    role = getattr(args, "actor_role", None) or os.environ.get("AGENTSKM_ROLE", "contributor")
+    explicit = getattr(args, "actor_role", None)
+    if explicit:
+        print("WARNING: --actor-role is deprecated; select an AgentsKM Profile instead.", file=sys.stderr)
+    role = explicit or (RUNTIME.role if RUNTIME else None) or os.environ.get("AGENTSKM_ROLE", "contributor")
     if role not in ROLE_ORDER:
         raise ValueError(f"Unknown actor role: {role}")
     return role
+
+
+def activate_runtime(context: RuntimeContext) -> None:
+    global ROOT, KM_DIR, LOCK_DIR, TX_DIR, RUNTIME
+    RUNTIME = context
+    ROOT = context.vault_path
+    KM_DIR = ROOT / ".km"
+    LOCK_DIR = KM_DIR / "locks"
+    TX_DIR = KM_DIR / "transactions"
 
 
 def require_role(args: argparse.Namespace, minimum: str, action: str) -> str:
@@ -277,6 +283,34 @@ def atomic_write(path: Path, text: str) -> None:
     temp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     temp.write_text(text, encoding="utf-8", newline="\n")
     os.replace(temp, path)
+
+
+class ConfigLock:
+    def __init__(self, timeout: float = 10.0) -> None:
+        self.path = CONFIG_PATH.with_suffix(CONFIG_PATH.suffix + ".lock")
+        self.timeout = timeout
+        self.fd: int | None = None
+
+    def __enter__(self) -> "ConfigLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        started = time.monotonic()
+        while True:
+            try:
+                self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(self.fd, f"pid={os.getpid()}\n".encode("utf-8"))
+                return self
+            except FileExistsError:
+                if time.monotonic() - started >= self.timeout:
+                    raise RuntimeError(f"Could not acquire config lock: {self.path}")
+                time.sleep(0.2)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self.fd is not None:
+            os.close(self.fd)
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def resolve_repo_path(path: Path | str) -> Path:
@@ -402,6 +436,7 @@ def command_status(args: argparse.Namespace) -> int:
         layers[page.layer] += 1
     data = {
         "ok": True,
+        "runtime": RUNTIME.as_dict() if RUNTIME else None,
         "layers": layers,
         "total_markdown": len(pages),
     }
@@ -1381,29 +1416,157 @@ def update_duplicate_candidate(
     return True
 
 
-def command_configure(args: argparse.Namespace) -> int:
-    vault = Path(args.vault).expanduser().resolve()
-    required = [vault / "000_Inbox", vault / "wiki"]
-    if not all(path.is_dir() for path in required):
-        raise ValueError(f"Not an AgentsKM vault: {vault}")
-    payload = {
-        "vault": str(vault),
-        "configured_at": datetime.now().isoformat(timespec="seconds"),
-    }
-    content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
-    if args.dry_run:
-        if wants_json(args):
-            emit_json({"ok": True, "dry_run": True, "config": str(CONFIG_PATH), **payload})
-            return 0
-        print(content)
-        return 0
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(CONFIG_PATH, content)
+def setup_command_hint(profile: str) -> str:
+    return f'"{sys.executable}" "{Path(__file__).resolve()}" setup --profile {profile}'
+
+
+def command_setup_status(args: argparse.Namespace) -> int:
+    payload = inspect_setup(CONFIG_PATH, args.profile)
+    payload["setup_command"] = setup_command_hint(str(payload["requested_profile"]))
+    payload["restart_required_after_setup"] = True
     if wants_json(args):
-        emit_json({"ok": True, "configured": True, "config": str(CONFIG_PATH), **payload})
+        emit_json(payload)
         return 0
-    print(f"Configured AgentsKM vault: {vault}")
+    print(f"AgentsKM setup: {payload['state']}")
+    print(payload["message"])
+    print(f"Config: {CONFIG_PATH}")
+    if not payload["configured"]:
+        print(f"Setup: {payload['setup_command']}")
     return 0
+
+
+def prepare_setup_config(args: argparse.Namespace) -> tuple[dict[str, object], bool, bool]:
+    migrated = False
+    if CONFIG_PATH.exists():
+        config = read_json(CONFIG_PATH)
+        if is_legacy_config(config):
+            legacy_vault = Path(str(config["vault"])).expanduser().resolve()
+            config = default_config(args.vault_name, legacy_vault)
+            migrated = True
+        else:
+            errors = validate_config(config)
+            if errors:
+                raise ValueError("Invalid AgentsKM config: " + "; ".join(errors))
+    else:
+        if not args.vault:
+            raise ValueError("--vault is required when creating the first AgentsKM configuration")
+        config = default_config(args.vault_name, Path(args.vault).expanduser().resolve())
+
+    vaults = config["vaults"]
+    if args.vault_name in vaults:
+        configured_vault = Path(vaults[args.vault_name]["path"]).expanduser().resolve()
+        if args.vault and configured_vault != Path(args.vault).expanduser().resolve():
+            raise ValueError(
+                f"Vault name already points elsewhere: {args.vault_name} -> {configured_vault}"
+            )
+        vault_path = configured_vault
+    else:
+        if not args.vault:
+            raise ValueError(f"--vault is required for new vault name: {args.vault_name}")
+        vault_path = Path(args.vault).expanduser().resolve()
+        vaults[args.vault_name] = {
+            "path": str(vault_path),
+            "create_if_missing": False,
+        }
+    if not vault_is_valid(vault_path):
+        raise ValueError(f"Not an AgentsKM vault: {vault_path}")
+
+    expected = {
+        "display_name": args.display_name or args.profile,
+        "host": args.host,
+        "actor_id": args.actor_id or args.profile,
+        "role": args.role,
+        "vault": args.vault_name,
+        "enabled": True,
+    }
+    profiles = config["profiles"]
+    changed = migrated
+    existing_profile = profiles.get(args.profile)
+    existing_compiler = (
+        isinstance(existing_profile, dict)
+        and existing_profile.get("role") == "compiler"
+        and existing_profile.get("host") == expected["host"]
+        and existing_profile.get("actor_id") == expected["actor_id"]
+        and existing_profile.get("vault") == expected["vault"]
+    )
+    if args.role == "compiler" and not args.confirm_compiler and not existing_compiler:
+        raise ValueError("Creating a compiler profile requires --confirm-compiler")
+    if args.profile in profiles:
+        current = profiles[args.profile]
+        core_fields = ("host", "actor_id", "role", "vault", "enabled")
+        conflicts = [key for key in core_fields if current.get(key, True) != expected[key]]
+        if conflicts:
+            details = ", ".join(
+                f"{key}: {current.get(key)!r} -> {expected[key]!r}" for key in conflicts
+            )
+            raise ValueError(
+                f"Profile already exists with different settings: {args.profile}; {details}"
+            )
+    else:
+        profiles[args.profile] = expected
+        changed = True
+
+    errors = validate_config(config)
+    if errors:
+        raise ValueError("Generated AgentsKM config is invalid: " + "; ".join(errors))
+    return config, changed, migrated
+
+
+def command_setup(args: argparse.Namespace) -> int:
+    with ConfigLock(timeout=args.lock_timeout):
+        config, changed, migrated = prepare_setup_config(args)
+        content = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
+        if changed and not args.dry_run:
+            if migrated:
+                backup = CONFIG_PATH.with_suffix(CONFIG_PATH.suffix + ".v0.bak")
+                if not backup.exists():
+                    shutil.copy2(CONFIG_PATH, backup)
+            atomic_write(CONFIG_PATH, content)
+
+    state = "configured" if changed else "already_configured"
+    payload = {
+        "ok": True,
+        "configured": True,
+        "state": state,
+        "changed": changed,
+        "dry_run": bool(args.dry_run),
+        "migrated_legacy_config": migrated,
+        "config_path": str(CONFIG_PATH),
+        "profile": args.profile,
+        "role": args.role,
+        "vault_name": args.vault_name,
+        "vault_path": config["vaults"][args.vault_name]["path"],
+        "restart_required": bool(changed and not args.dry_run),
+    }
+    if args.dry_run:
+        payload["preview"] = config
+    if wants_json(args):
+        emit_json(payload)
+        return 0
+    print(f"AgentsKM setup: {state}")
+    print(f"Profile: {args.profile} ({args.role})")
+    print(f"Vault: {payload['vault_path']}")
+    if payload["restart_required"]:
+        print("Restart the Agent or reconnect its MCP server to load this Profile.")
+    return 0
+
+
+def command_configure(args: argparse.Namespace) -> int:
+    print("WARNING: `configure` is deprecated; use `setup` with an Agent Profile.", file=sys.stderr)
+    setup_args = argparse.Namespace(
+        profile="default",
+        display_name="Unknown local agent",
+        host="unknown",
+        actor_id="local-default",
+        role="contributor",
+        vault_name="main",
+        vault=args.vault,
+        confirm_compiler=False,
+        dry_run=args.dry_run,
+        lock_timeout=args.lock_timeout,
+        json=args.json,
+    )
+    return command_setup(setup_args)
 
 
 def add_common_write_args(parser: argparse.ArgumentParser) -> None:
@@ -1421,7 +1584,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="km")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    configure = subparsers.add_parser("configure", help="Bind the toolkit to a knowledge vault")
+    setup_status = subparsers.add_parser("setup-status", help="Check AgentsKM configuration and Profile readiness")
+    setup_status.add_argument("--profile")
+    add_json_arg(setup_status)
+    setup_status.set_defaults(func=command_setup_status)
+
+    setup = subparsers.add_parser("setup", help="Create or extend the AgentsKM user configuration")
+    setup.add_argument("--profile", required=True)
+    setup.add_argument("--display-name")
+    setup.add_argument("--host", default="generic")
+    setup.add_argument("--actor-id")
+    setup.add_argument("--role", choices=sorted(ROLE_ORDER), default="contributor")
+    setup.add_argument("--vault-name", default="main")
+    setup.add_argument("--vault")
+    setup.add_argument("--confirm-compiler", action="store_true")
+    add_json_arg(setup)
+    setup.add_argument("--dry-run", action="store_true")
+    setup.add_argument("--lock-timeout", type=float, default=10.0)
+    setup.set_defaults(func=command_setup)
+
+    configure = subparsers.add_parser("configure", help="Deprecated alias for contributor setup")
     configure.add_argument("--vault", required=True)
     add_json_arg(configure)
     add_common_write_args(configure)
@@ -1517,7 +1699,8 @@ def main(argv: list[str] | None = None) -> int:
     qmd_readiness.set_defaults(func=command_qmd_readiness)
 
     args = parser.parse_args(argv)
-    if args.command != "configure":
+    if args.command not in {"configure", "setup", "setup-status"}:
+        activate_runtime(resolve_runtime(CONFIG_PATH))
         ensure_vault_root()
     return args.func(args)
 

@@ -2,16 +2,36 @@
 
 > 日期：2026-07-27
 
-## 1. 安装与绑定
+## 1. 安装与 Setup
 
-Toolkit 和 Vault 分开克隆。首次绑定：
+终端用户安装插件或 MCP 包，不需要克隆 Toolkit。已有知识库可以通过 Git
+克隆、备份恢复或已有本地目录准备。首次为 Hermes 配置：
 
 ```powershell
-python tools\km-cli\km.py configure --vault D:\path\to\agentskm-vault
-python tools\km-cli\km.py status
+python tools\km-cli\km.py setup-status --profile hermes-agent
+
+python tools\km-cli\km.py setup `
+  --profile hermes-agent `
+  --host hermes `
+  --role contributor `
+  --vault-name main `
+  --vault D:\path\to\agentskm-vault
 ```
 
-也可以设置 `AGENTSKM_DATA_ROOT` 覆盖持久配置。
+配置保存到 `%USERPROFILE%\.agentskm\config.json`。MCP 缺少配置时只暴露
+`km_setup_status` 和 `km_setup_instructions`。Setup 完成后重启 Agent 或重新
+连接 MCP。
+
+Codex Compiler Profile 需要显式确认：
+
+```powershell
+python tools\km-cli\km.py setup `
+  --profile codex --host codex --role compiler `
+  --vault-name main --confirm-compiler
+```
+
+日常只使用 `AGENTSKM_CONFIG` 和 `AGENTSKM_PROFILE`。旧环境变量和角色参数
+仅用于过渡兼容。
 
 ## 2. 日常查询
 

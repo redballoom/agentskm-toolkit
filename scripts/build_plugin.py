@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins" / "agentskm-toolkit"
 COPIES = {
     ROOT / "tools" / "km-cli" / "km.py": PLUGIN / "tools" / "km-cli" / "km.py",
+    ROOT / "tools" / "km-cli" / "km_config.py": PLUGIN / "tools" / "km-cli" / "km_config.py",
     ROOT / "tools" / "km-cli" / "README.md": PLUGIN / "tools" / "km-cli" / "README.md",
     ROOT / "adapters" / "mcp" / "km_mcp.py": PLUGIN / "adapters" / "mcp" / "km_mcp.py",
     ROOT / "adapters" / "mcp" / "README.md": PLUGIN / "adapters" / "mcp" / "README.md",

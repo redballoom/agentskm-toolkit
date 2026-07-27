@@ -47,8 +47,10 @@ def main() -> int:
         )
         os.environ.update(test_env())
 
+        test_setup_bootstrap()
+        test_setup_profiles()
+        test_legacy_setup_migration()
         test_cli_read_paths()
-        test_configure()
         test_role_guardrail()
         test_review_and_promote_workflow()
         test_merge_workflow()
@@ -76,11 +78,121 @@ def test_cli_read_paths() -> None:
     assert run_km(["lint", "--json"])["ok"] is True
 
 
-def test_configure() -> None:
-    payload = run_km(["configure", "--vault", str(TEST_VAULT), "--json"])
-    assert payload["configured"] is True
+def test_setup_bootstrap() -> None:
+    status = run_km(["setup-status", "--profile", "hermes-agent", "--json"])
+    assert status["configured"] is False and status["state"] == "config_missing"
+    responses = mcp_exchange(MCP_ADAPTER, "hermes-agent", [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "km_setup_instructions", "arguments": {}}},
+    ])
+    names = {item["name"] for item in responses[1]["result"]["tools"]}
+    assert names == {"km_setup_status", "km_setup_instructions"}
+    instructions = responses[2]["result"]["structuredContent"]
+    assert instructions["write_via_mcp"] is False
+    assert instructions["requested_profile"] == "hermes-agent"
+
+
+def test_setup_profiles() -> None:
+    hermes_args = [
+        "setup",
+        "--profile", "hermes-agent",
+        "--host", "hermes",
+        "--actor-id", "hermes-agent",
+        "--role", "contributor",
+        "--vault-name", "main",
+        "--vault", str(TEST_VAULT),
+        "--json",
+    ]
+    configured = run_km(hermes_args)
+    assert configured["changed"] is True and configured["restart_required"] is True
+    repeated = run_km(hermes_args)
+    assert repeated["state"] == "already_configured" and repeated["changed"] is False
+
+    blocked = run_process([
+        sys.executable,
+        str(KM),
+        "setup",
+        "--profile", "codex",
+        "--host", "codex",
+        "--role", "compiler",
+        "--vault-name", "main",
+        "--json",
+    ])
+    assert blocked.returncode != 0
+    assert "--confirm-compiler" in json.loads(blocked.stdout)["error"]
+
+    codex = run_km([
+        "setup",
+        "--profile", "codex",
+        "--host", "codex",
+        "--actor-id", "codex",
+        "--role", "compiler",
+        "--vault-name", "main",
+        "--confirm-compiler",
+        "--json",
+    ])
+    assert codex["role"] == "compiler"
+    codex_repeated = run_km([
+        "setup",
+        "--profile", "codex",
+        "--host", "codex",
+        "--actor-id", "codex",
+        "--role", "compiler",
+        "--vault-name", "main",
+        "--json",
+    ])
+    assert codex_repeated["state"] == "already_configured"
+    reviewer = run_km([
+        "setup",
+        "--profile", "km-reviewer",
+        "--host", "generic",
+        "--actor-id", "km-reviewer",
+        "--role", "reviewer",
+        "--vault-name", "main",
+        "--json",
+    ])
+    assert reviewer["role"] == "reviewer"
+
     saved = json.loads(TEST_CONFIG.read_text(encoding="utf-8"))
-    assert Path(saved["vault"]).resolve() == TEST_VAULT.resolve()
+    assert saved["schema_version"] == 1
+    assert Path(saved["vaults"]["main"]["path"]).resolve() == TEST_VAULT.resolve()
+    assert saved["profiles"]["hermes-agent"]["role"] == "contributor"
+    assert saved["profiles"]["codex"]["role"] == "compiler"
+
+
+def test_legacy_setup_migration() -> None:
+    legacy_config = TEST_ROOT / "legacy-config.json"
+    legacy_config.write_text(
+        json.dumps({"vault": str(TEST_VAULT)}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    env = test_env()
+    env["AGENTSKM_CONFIG"] = str(legacy_config)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(KM),
+            "setup",
+            "--profile", "hermes-agent",
+            "--host", "hermes",
+            "--role", "contributor",
+            "--vault-name", "main",
+            "--json",
+        ],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, **env},
+        capture_output=True,
+    )
+    assert proc.returncode == 0, proc.stdout or proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["migrated_legacy_config"] is True
+    assert legacy_config.with_suffix(".json.v0.bak").exists()
+    migrated = json.loads(legacy_config.read_text(encoding="utf-8"))
+    assert migrated["schema_version"] == 1
+    assert migrated["profiles"]["default"]["role"] == "contributor"
 
 
 def test_role_guardrail() -> None:
@@ -258,7 +370,7 @@ def test_http_adapter() -> None:
 
 
 def test_mcp_role_profiles() -> None:
-    contributor = mcp_exchange(MCP_ADAPTER, "contributor", [
+    contributor = mcp_exchange(MCP_ADAPTER, "hermes-agent", [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
     ])
@@ -266,8 +378,9 @@ def test_mcp_role_profiles() -> None:
     assert "km_propose_capture" in contributor_names
     assert "km_promote_candidate" not in contributor_names
     assert "km_review_candidate" not in contributor_names
+    assert "km_setup_status" in contributor_names
 
-    compiler = mcp_exchange(MCP_ADAPTER, "compiler", [
+    compiler = mcp_exchange(MCP_ADAPTER, "codex", [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "km_search", "arguments": {"query": "领星 API 鉴权", "limit": 1}}},
@@ -281,13 +394,19 @@ def test_self_contained_plugin() -> None:
     plugin_cli = PLUGIN / "tools" / "km-cli" / "km.py"
     plugin_mcp = PLUGIN / "adapters" / "mcp" / "km_mcp.py"
     assert plugin_cli.exists() and plugin_mcp.exists()
-    assert (PLUGIN / "skills" / "agentskm-capture" / "SKILL.md").exists()
-    responses = mcp_exchange(plugin_mcp, "compiler", [
+    skill_path = PLUGIN / "skills" / "agentskm-capture" / "SKILL.md"
+    assert skill_path.exists()
+    skill_text = skill_path.read_text(encoding="utf-8")
+    assert "km_setup_status" in skill_text
+    assert "The CLI is the only Setup writer" in skill_text
+    assert "restart the Agent or reconnect the MCP server" in skill_text
+    responses = mcp_exchange(plugin_mcp, "codex", [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
     ])
     names = {item["name"] for item in responses[1]["result"]["tools"]}
-    assert "km_configure_vault" in names and "km_promote_candidate" in names
+    assert "km_setup_status" in names and "km_promote_candidate" in names
+    assert "km_configure_vault" not in names
 
 
 def test_second_agent_config() -> None:
@@ -295,14 +414,14 @@ def test_second_agent_config() -> None:
     proc = run_process([
         sys.executable,
         str(MCP_CONFIG_RENDERER),
-        "--agent", "claude",
-        "--vault", str(TEST_VAULT),
-        "--role", "contributor",
+        "--agent", "hermes",
+        "--profile", "hermes-agent",
+        "--config", str(TEST_CONFIG),
         "--output", str(output),
     ])
     assert proc.returncode == 0, proc.stderr
     server = json.loads(output.read_text(encoding="utf-8"))["mcpServers"]["agentskm"]
-    assert server["args"][-1] == "contributor"
+    assert server["args"][-1] == "hermes-agent"
     env = os.environ.copy()
     env.update(server["env"])
     messages = "\n".join([
@@ -327,8 +446,8 @@ def test_second_agent_config() -> None:
 
 def test_env() -> dict[str, str]:
     return {
-        "AGENTSKM_DATA_ROOT": str(TEST_VAULT),
         "AGENTSKM_CONFIG": str(TEST_CONFIG),
+        "AGENTSKM_PROFILE": "codex",
         "PYTHONUTF8": "1",
     }
 
@@ -353,9 +472,9 @@ def run_process(args: list[str], input_text: str | None = None) -> subprocess.Co
     )
 
 
-def mcp_exchange(path: Path, role: str, messages: list[dict]) -> list[dict]:
+def mcp_exchange(path: Path, profile: str, messages: list[dict]) -> list[dict]:
     input_text = "\n".join(json.dumps(item, ensure_ascii=True) for item in messages) + "\n"
-    proc = run_process([sys.executable, str(path), "--role", role], input_text=input_text)
+    proc = run_process([sys.executable, str(path), "--profile", profile], input_text=input_text)
     assert proc.returncode == 0, proc.stderr
     return [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
 

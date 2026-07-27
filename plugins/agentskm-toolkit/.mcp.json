@@ -4,8 +4,8 @@
       "command": "python",
       "args": [
         "./adapters/mcp/km_mcp.py",
-        "--role",
-        "compiler"
+        "--profile",
+        "codex"
       ]
     }
   }

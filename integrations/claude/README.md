@@ -5,8 +5,7 @@ Generate a contributor MCP configuration:
 ```powershell
 python scripts/render_mcp_config.py `
   --agent claude `
-  --vault D:\path\to\agentskm-vault `
-  --role contributor `
+  --profile claude `
   --output .mcp.json
 ```
 

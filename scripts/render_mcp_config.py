@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -14,28 +17,45 @@ MCP = ROOT / "adapters" / "mcp" / "km_mcp.py"
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--agent", choices=["claude", "cursor", "generic"], required=True)
-    parser.add_argument("--vault", required=True)
-    parser.add_argument("--role", choices=["contributor", "reviewer", "compiler"], default="contributor")
+    parser.add_argument("--agent", choices=["claude", "cursor", "hermes", "generic"], required=True)
+    parser.add_argument("--profile", required=True)
+    parser.add_argument("--config")
     parser.add_argument("--output")
     args = parser.parse_args()
 
-    vault = Path(args.vault).expanduser().resolve()
-    if not (vault / "000_Inbox").is_dir() or not (vault / "wiki").is_dir():
-        parser.error(f"Not an AgentsKM vault: {vault}")
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["AGENTSKM_PROFILE"] = args.profile
+    if args.config:
+        env["AGENTSKM_CONFIG"] = str(Path(args.config).expanduser().resolve())
+    status = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "km-cli" / "km.py"), "setup-status", "--profile", args.profile, "--json"],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        capture_output=True,
+    )
+    if status.returncode != 0:
+        parser.error(status.stderr or status.stdout or "AgentsKM setup check failed")
+    payload = json.loads(status.stdout)
+    if not payload.get("configured"):
+        parser.error(f"Profile is not ready: {args.profile} ({payload.get('state')})")
 
     config = {
         "mcpServers": {
             "agentskm": {
                 "command": "python",
-                "args": [str(MCP), "--role", args.role],
+                "args": [str(MCP), "--profile", args.profile],
                 "env": {
-                    "AGENTSKM_DATA_ROOT": str(vault),
+                    "AGENTSKM_PROFILE": args.profile,
                     "PYTHONUTF8": "1",
                 },
             }
         }
     }
+    if args.config:
+        config["mcpServers"]["agentskm"]["env"]["AGENTSKM_CONFIG"] = env["AGENTSKM_CONFIG"]
     text = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         output = Path(args.output).expanduser().resolve()
