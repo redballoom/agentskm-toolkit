@@ -12,17 +12,29 @@ python tools/km-cli/km.py setup `
   --profile hermes-agent `
   --host hermes `
   --role contributor `
-  --vault-name main `
-  --vault D:\path\to\agentskm-vault
+  --vault-name main
 ```
 
-Setup writes `%USERPROFILE%\.agentskm\config.json`. Repeating the same command
-is a no-op. Creating a compiler Profile additionally requires
-`--confirm-compiler`. Use `AGENTSKM_CONFIG` to select another config file and
-`AGENTSKM_PROFILE` to select a Profile.
+Setup writes `%USERPROFILE%\.agentskm\config.json`. When no Vault is supplied,
+it creates `%USERPROFILE%\Documents\AgentsKM\vault` with an empty Inbox, Wiki
+layers, index, and usage instructions. Repeating the same command is a no-op.
+Creating a compiler Profile additionally requires `--confirm-compiler`.
 
-`configure`, `AGENTSKM_DATA_ROOT`, `AGENTSKM_ROLE`, and `--actor-role` remain
-temporary compatibility interfaces and should not be used in new setup.
+The config file is the sole runtime source for Vault paths and roles. MCP
+servers pass the Profile explicitly. Environment variables are not used for
+config, Profile, role, or Vault selection. `--config` is reserved for isolated
+diagnostics and tests; `--actor-role` remains a deprecated compatibility flag.
+
+## Diagnose And Update
+
+```powershell
+python tools/km-cli/km.py doctor --profile codex
+python tools/km-cli/km.py update
+```
+
+`update` fast-forwards a source checkout or refreshes and reinstalls a Codex
+Git marketplace package. A code update requires a new conversation or MCP
+reconnect; Setup and config path changes do not.
 
 ## Read
 

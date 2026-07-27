@@ -5,7 +5,11 @@
       "args": [
         "./adapters/mcp/km_mcp.py",
         "--profile",
-        "codex"
+        "codex",
+        "--host",
+        "codex",
+        "--bootstrap-role",
+        "compiler"
       ]
     }
   }

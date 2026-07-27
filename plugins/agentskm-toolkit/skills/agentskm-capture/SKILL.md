@@ -9,21 +9,31 @@ Use the `agentskm` MCP tools. Treat Wiki as reviewed knowledge, Inbox as unrevie
 
 ## Setup And Bootstrap
 
-When `km_setup_status` is available, call it before the first knowledge-base operation in a new installation or after a setup-related error.
+On the first MCP start after installation, AgentsKM automatically creates
+`%USERPROFILE%/.agentskm/config.json`, the requested Agent Profile, and an empty
+Vault at `%USERPROFILE%/Documents/AgentsKM/vault` when no config exists. The
+empty Vault includes its layer directories and local usage instructions.
+
+When `km_setup_status` is available, call it before the first knowledge-base operation in a new installation or after a setup-related error. Use `km_doctor` when the state or path is unclear.
 
 If it reports `configured: true`, use the normal tools exposed for the selected Profile. Do not ask the user to configure the Vault again.
 
-If only `km_setup_status` and `km_setup_instructions` are available, the MCP server is intentionally in read-only Bootstrap mode:
+If only Setup, Doctor, and Update tools are available, automatic bootstrap could not safely complete, usually because the config is legacy/invalid or a target directory is non-empty:
 
 1. Call both tools and explain the reported state.
-2. Reuse an existing configured Vault when one is listed. Otherwise ask for the absolute path of an existing AgentsKM Vault.
+2. Reuse an existing configured Vault when one is listed. Otherwise use the recommended default path unless the user asks for another Vault.
 3. Use the Profile requested by the host. Recommend `contributor` for Hermes, Claude, Cursor, automation, and other new Agents. A `compiler` Profile requires explicit user confirmation.
 4. Show the exact Profile, role, Vault name, Vault path, and config path that Setup will change.
-5. Ask for confirmation before changing the user configuration.
-6. After confirmation, use a local shell to run the bundled `km.py setup` CLI reported by `km_setup_instructions`. Use `--confirm-compiler` only when the user explicitly approved a Compiler Profile.
-7. Report the CLI result and ask the user to restart the Agent or reconnect the MCP server. Do not claim the full tool set is active in the current MCP process.
+5. Use a local shell to run the bundled `km.py setup` CLI reported by `km_setup_instructions`. Use `--confirm-compiler` only when the user explicitly approved a Compiler Profile.
+6. Call `km_setup_status` again. Setup and Vault path changes are re-read on each operation and do not normally require an Agent restart.
 
-The CLI is the only Setup writer. Never edit `%USERPROFILE%/.agentskm/config.json` directly and never invent an MCP configuration-writing call. Repeated Setup is idempotent; an existing conflicting Profile must be shown to the user rather than overwritten.
+The CLI is the only Setup writer. Never edit `%USERPROFILE%/.agentskm/config.json` directly and never invent an MCP configuration-writing call. Repeated Setup is idempotent; an existing conflicting Profile must be shown to the user rather than overwritten. Do not use environment variables to select the config, Profile, role, or Vault.
+
+## Diagnose And Update
+
+- Use `km_doctor` when installation, Profile, role, config, Vault, permissions, or stale locks may be wrong.
+- When the user asks to update AgentsKM, call `km_update` directly; do not add another confirmation prompt.
+- A code update returns `restart_required: true`. Ask the host to reconnect this MCP server when supported; otherwise tell the user to start a new conversation. Never terminate the active host process from the Skill.
 
 ## Start Of Work
 
@@ -65,6 +75,11 @@ After the candidate is created, record `remind` with `km_review_candidate`, then
 ```
 
 Do not interrupt the main answer with the prompt. Do not repeatedly remind a candidate whose status is `reminded`. Only surface candidates returned by `km_reminders`.
+
+Inbox is shared by all Profiles connected to the Vault. Keep provenance at the
+top of every candidate through `agent_id`, `source_tool`, `source_session`, and
+`source_refs`. On a duplicate candidate, preserve all contributing Agents and
+sessions rather than creating a second record.
 
 ## Apply User Decision
 

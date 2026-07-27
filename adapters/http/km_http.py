@@ -21,7 +21,8 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parents[2]
 KM = ROOT / "tools" / "km-cli" / "km.py"
 MAX_BODY = 1024 * 1024
-ROLE = "contributor"
+PROFILE = "default"
+CONFIG_PATH = ""
 HTTP_TOKEN = ""
 
 
@@ -112,6 +113,9 @@ class KMHandler(BaseHTTPRequestHandler):
     def run_cli(self, args: list[str]) -> None:
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
+        args = [*args, "--profile", PROFILE]
+        if CONFIG_PATH:
+            args.extend(["--config", CONFIG_PATH])
         proc = subprocess.run(
             [sys.executable, str(KM), *args],
             cwd=ROOT,
@@ -163,7 +167,6 @@ def build_propose_args(data: dict[str, object]) -> list[str]:
         "propose",
         "--title", title,
         "--value-reason", value_reason,
-        "--actor-role", ROLE,
         "--json",
     ]
     append_option(args, data, "type", "--type")
@@ -187,7 +190,7 @@ def build_propose_args(data: dict[str, object]) -> list[str]:
 
 def build_promote_args(data: dict[str, object]) -> list[str]:
     candidate = require_string(data, "candidate")
-    args = ["promote", candidate, "--actor-role", ROLE, "--json"]
+    args = ["promote", candidate, "--json"]
     append_option(args, data, "target", "--target")
     append_option(args, data, "title", "--title")
     append_option(args, data, "summary", "--summary")
@@ -203,7 +206,6 @@ def build_review_args(data: dict[str, object]) -> list[str]:
         "review",
         require_string(data, "candidate"),
         "--decision", require_string(data, "decision"),
-        "--actor-role", ROLE,
         "--json",
     ]
     append_option(args, data, "reviewed_by", "--reviewed-by")
@@ -221,7 +223,6 @@ def build_merge_args(data: dict[str, object]) -> list[str]:
         "--target", require_string(data, "target"),
         "--approved-by", require_string(data, "approved_by"),
         "--scope", require_string(data, "scope"),
-        "--actor-role", ROLE,
         "--json",
     ]
     if bool(data.get("dry_run", False)):
@@ -255,16 +256,18 @@ def string_list(value: object) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    global ROLE, HTTP_TOKEN
+    global PROFILE, CONFIG_PATH, HTTP_TOKEN
     parser = argparse.ArgumentParser(prog="km-http")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--role", choices=["contributor", "reviewer", "compiler"], default=os.environ.get("AGENTSKM_ROLE", "contributor"))
+    parser.add_argument("--profile", default="default")
+    parser.add_argument("--config")
     parser.add_argument("--token", default=os.environ.get("AGENTSKM_HTTP_TOKEN", ""))
     args = parser.parse_args(argv)
     if not args.token:
         parser.error("--token or AGENTSKM_HTTP_TOKEN is required")
-    ROLE = args.role
+    PROFILE = args.profile
+    CONFIG_PATH = str(Path(args.config).expanduser().resolve()) if args.config else ""
     HTTP_TOKEN = args.token
 
     server = ThreadingHTTPServer((args.host, args.port), KMHandler)

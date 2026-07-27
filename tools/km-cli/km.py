@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from km_config import (
+    DEFAULT_VAULT,
     RuntimeContext,
     default_config,
     get_config_path,
@@ -32,6 +34,10 @@ from km_config import (
 )
 
 
+TOOLKIT_VERSION = "0.4.2"
+TOOLKIT_REPOSITORY = "https://github.com/redballoom/agentskm-toolkit"
+CODEX_MARKETPLACE = "agentskm-local"
+CODEX_PLUGIN = "agentskm-toolkit"
 TOOL_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = get_config_path()
 ROOT = TOOL_ROOT
@@ -164,7 +170,7 @@ def actor_role(args: argparse.Namespace) -> str:
     explicit = getattr(args, "actor_role", None)
     if explicit:
         print("WARNING: --actor-role is deprecated; select an AgentsKM Profile instead.", file=sys.stderr)
-    role = explicit or (RUNTIME.role if RUNTIME else None) or os.environ.get("AGENTSKM_ROLE", "contributor")
+    role = explicit or (RUNTIME.role if RUNTIME else None) or "contributor"
     if role not in ROLE_ORDER:
         raise ValueError(f"Unknown actor role: {role}")
     return role
@@ -283,6 +289,44 @@ def atomic_write(path: Path, text: str) -> None:
     temp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     temp.write_text(text, encoding="utf-8", newline="\n")
     os.replace(temp, path)
+
+
+def initialize_empty_vault(path: Path) -> bool:
+    """Create the minimal, human-readable Vault layout used on first install."""
+    if vault_is_valid(path):
+        return False
+    if path.exists() and any(path.iterdir()):
+        raise ValueError(f"Refusing to initialize a non-empty non-AgentsKM directory: {path}")
+    for relative in (
+        "000_Inbox",
+        "wiki/entities",
+        "wiki/concepts",
+        "wiki/comparisons",
+        "wiki/queries",
+        "raw",
+        "docs",
+    ):
+        (path / relative).mkdir(parents=True, exist_ok=True)
+    atomic_write(
+        path / "README.md",
+        "# AgentsKM Vault\n\n"
+        "This directory contains private knowledge data managed by AgentsKM.\n\n"
+        "- `000_Inbox/`: unreviewed candidates from all connected Agents\n"
+        "- `wiki/`: reviewed, durable knowledge\n"
+        "- `raw/`: source evidence retained when needed\n"
+        "- `docs/`: Vault-local operating notes and dashboards\n\n"
+        "Change the Vault path in `%USERPROFILE%/.agentskm/config.json` to bind "
+        "all configured Agent Profiles to another local Vault.\n",
+    )
+    atomic_write(
+        path / "index.md",
+        "# AgentsKM\n\n"
+        "## Entities\n\n"
+        "## Concepts\n\n"
+        "## Comparisons\n\n"
+        "## Queries\n",
+    )
+    return True
 
 
 class ConfigLock:
@@ -1420,10 +1464,205 @@ def setup_command_hint(profile: str) -> str:
     return f'"{sys.executable}" "{Path(__file__).resolve()}" setup --profile {profile}'
 
 
+def recommended_vault_path() -> Path:
+    if CONFIG_PATH == get_config_path():
+        return DEFAULT_VAULT.resolve()
+    return (CONFIG_PATH.parent / "vault").resolve()
+
+
+def command_doctor(args: argparse.Namespace) -> int:
+    status = inspect_setup(CONFIG_PATH, args.profile)
+    checks: list[dict[str, object]] = [
+        {
+            "name": "config",
+            "ok": status.get("state") not in {"config_invalid", "legacy_config"},
+            "detail": str(status.get("message", "")),
+        }
+    ]
+    vault_path_text = status.get("vault_path")
+    if vault_path_text:
+        vault_path = Path(str(vault_path_text))
+        checks.extend([
+            {"name": "vault_exists", "ok": vault_path.is_dir(), "detail": str(vault_path)},
+            {"name": "vault_layout", "ok": vault_is_valid(vault_path), "detail": str(vault_path)},
+            {"name": "vault_writable", "ok": os.access(vault_path, os.W_OK), "detail": str(vault_path)},
+            {
+                "name": "stale_locks",
+                "ok": not (vault_path / ".km" / "locks").exists()
+                or not any((vault_path / ".km" / "locks").glob("*.lock")),
+                "detail": str(vault_path / ".km" / "locks"),
+            },
+        ])
+    ready = bool(status.get("configured")) and all(bool(item["ok"]) for item in checks)
+    payload = {
+        "ok": ready,
+        "toolkit_version": TOOLKIT_VERSION,
+        "repository": TOOLKIT_REPOSITORY,
+        "config_path": str(CONFIG_PATH),
+        "configuration_source": "config_file",
+        "environment_configuration": "ignored",
+        "profile": status.get("profile", status.get("requested_profile")),
+        "role": status.get("role"),
+        "vault_path": vault_path_text,
+        "state": status.get("state"),
+        "checks": checks,
+        "next_action": "ready" if ready else status.get("next_action", setup_command_hint(str(status.get("requested_profile", "default")))),
+    }
+    if wants_json(args):
+        emit_json(payload)
+        return 0 if ready else 1
+    print(f"AgentsKM doctor: {'ready' if ready else 'attention required'}")
+    print(f"Version: {TOOLKIT_VERSION}")
+    print(f"Config: {CONFIG_PATH}")
+    for check in checks:
+        print(f"[{'ok' if check['ok'] else 'fail'}] {check['name']}: {check['detail']}")
+    print(f"Next: {payload['next_action']}")
+    return 0 if ready else 1
+
+
+def run_update_process(command: list[str], cwd: Path) -> dict[str, object]:
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"Cannot start update command ({' '.join(command)}): {exc}") from exc
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "update command failed").strip()
+        raise RuntimeError(f"Update command failed ({' '.join(command)}): {detail}")
+    return {
+        "command": command,
+        "stdout": proc.stdout.strip(),
+        "stderr": proc.stderr.strip(),
+    }
+
+
+def command_launcher(name: str) -> list[str]:
+    if os.name == "nt":
+        cmd_path = shutil.which(f"{name}.cmd")
+        if cmd_path:
+            return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", cmd_path]
+        exe_path = shutil.which(f"{name}.exe")
+        if exe_path:
+            return [exe_path]
+    path = shutil.which(name)
+    if path:
+        return [path]
+    raise RuntimeError(f"Required update command was not found on PATH: {name}")
+
+
+def command_update(args: argparse.Namespace) -> int:
+    steps: list[dict[str, object]] = []
+    if (TOOL_ROOT / ".git").is_dir():
+        dirty = run_update_process(["git", "status", "--porcelain"], TOOL_ROOT)["stdout"]
+        if dirty:
+            raise RuntimeError("Toolkit checkout has local changes; commit or stash them before update")
+        steps.append(run_update_process(["git", "fetch", "origin", "main"], TOOL_ROOT))
+        if not args.check:
+            steps.append(run_update_process(["git", "merge", "--ff-only", "origin/main"], TOOL_ROOT))
+            build_script = TOOL_ROOT / "scripts" / "build_plugin.py"
+            if build_script.exists():
+                steps.append(run_update_process([sys.executable, str(build_script)], TOOL_ROOT))
+        mode = "git_checkout"
+        restart_required = not args.check
+    else:
+        host = args.host or "codex"
+        if host != "codex":
+            raise RuntimeError(
+                "This packaged host has no supported self-update driver. Reinstall the plugin package from "
+                f"{TOOLKIT_REPOSITORY}."
+            )
+        codex = command_launcher("codex")
+        listed = run_update_process(
+            [*codex, "plugin", "marketplace", "list", "--json"], TOOL_ROOT
+        )
+        steps.append(listed)
+        try:
+            marketplace_data = json.loads(str(listed["stdout"]))
+            marketplace_item = next(
+                item for item in marketplace_data.get("marketplaces", [])
+                if item.get("name") == args.marketplace
+            )
+            marketplace_root = Path(str(marketplace_item["root"])).resolve()
+        except (json.JSONDecodeError, KeyError, StopIteration, TypeError) as exc:
+            raise RuntimeError(f"Codex marketplace is not configured: {args.marketplace}") from exc
+
+        local_checkout = (marketplace_root / ".git").is_dir()
+        if local_checkout:
+            dirty = run_update_process(
+                ["git", "status", "--porcelain"], marketplace_root
+            )["stdout"]
+            steps.append({
+                "command": ["git", "status", "--porcelain"],
+                "stdout": str(dirty),
+                "stderr": "",
+                "dirty": bool(dirty),
+            })
+            if dirty and not args.check:
+                raise RuntimeError(
+                    f"Local marketplace checkout has changes: {marketplace_root}; "
+                    "commit or stash them before update"
+                )
+            if not dirty:
+                steps.append(run_update_process(
+                    ["git", "fetch", "origin", "main"], marketplace_root
+                ))
+                if not args.check:
+                    steps.append(run_update_process(
+                        ["git", "merge", "--ff-only", "origin/main"], marketplace_root
+                    ))
+                    build_script = marketplace_root / "scripts" / "build_plugin.py"
+                    if build_script.exists():
+                        steps.append(run_update_process(
+                            [sys.executable, str(build_script)], marketplace_root
+                        ))
+            mode = "codex_local_git_marketplace"
+        else:
+            steps.append(run_update_process(
+                [*codex, "plugin", "marketplace", "upgrade", args.marketplace, "--json"],
+                TOOL_ROOT,
+            ))
+            mode = "codex_git_marketplace"
+        if not args.check:
+            steps.append(run_update_process(
+                [*codex, "plugin", "add", f"{CODEX_PLUGIN}@{args.marketplace}", "--json"],
+                TOOL_ROOT,
+            ))
+        restart_required = not args.check
+    payload = {
+        "ok": True,
+        "mode": mode,
+        "repository": TOOLKIT_REPOSITORY,
+        "current_process_version": TOOLKIT_VERSION,
+        "check_only": bool(args.check),
+        "steps": steps,
+        "restart_required": restart_required,
+        "next_action": (
+            "start_new_conversation_or_reconnect_mcp" if restart_required else "none"
+        ),
+    }
+    if wants_json(args):
+        emit_json(payload)
+        return 0
+    print(f"AgentsKM update: {mode}")
+    print("Update completed." if not args.check else "Update check completed.")
+    if restart_required:
+        print("Start a new conversation or reconnect the AgentsKM MCP server to load the new code.")
+    return 0
+
+
 def command_setup_status(args: argparse.Namespace) -> int:
     payload = inspect_setup(CONFIG_PATH, args.profile)
     payload["setup_command"] = setup_command_hint(str(payload["requested_profile"]))
-    payload["restart_required_after_setup"] = True
+    payload["recommended_vault_path"] = str(recommended_vault_path())
+    payload["next_action"] = (
+        "ready" if payload["configured"] else "run_setup_or_start_the_plugin_once"
+    )
+    payload["restart_required_after_setup"] = False
     if wants_json(args):
         emit_json(payload)
         return 0
@@ -1435,8 +1674,10 @@ def command_setup_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def prepare_setup_config(args: argparse.Namespace) -> tuple[dict[str, object], bool, bool]:
+def prepare_setup_config(args: argparse.Namespace) -> tuple[dict[str, object], bool, bool, bool]:
     migrated = False
+    vault_initialized = False
+    config_created = not CONFIG_PATH.exists()
     if CONFIG_PATH.exists():
         config = read_json(CONFIG_PATH)
         if is_legacy_config(config):
@@ -1448,9 +1689,16 @@ def prepare_setup_config(args: argparse.Namespace) -> tuple[dict[str, object], b
             if errors:
                 raise ValueError("Invalid AgentsKM config: " + "; ".join(errors))
     else:
-        if not args.vault:
-            raise ValueError("--vault is required when creating the first AgentsKM configuration")
-        config = default_config(args.vault_name, Path(args.vault).expanduser().resolve())
+        initial_vault = Path(args.vault).expanduser().resolve() if args.vault else recommended_vault_path()
+        config = default_config(
+            args.vault_name,
+            initial_vault,
+            profile_name=args.profile,
+            display_name=args.display_name,
+            host=args.host,
+            actor_id=args.actor_id,
+            role=args.role,
+        )
 
     vaults = config["vaults"]
     if args.vault_name in vaults:
@@ -1469,7 +1717,10 @@ def prepare_setup_config(args: argparse.Namespace) -> tuple[dict[str, object], b
             "create_if_missing": False,
         }
     if not vault_is_valid(vault_path):
-        raise ValueError(f"Not an AgentsKM vault: {vault_path}")
+        if args.dry_run:
+            vault_initialized = True
+        else:
+            vault_initialized = initialize_empty_vault(vault_path)
 
     expected = {
         "display_name": args.display_name or args.profile,
@@ -1480,7 +1731,7 @@ def prepare_setup_config(args: argparse.Namespace) -> tuple[dict[str, object], b
         "enabled": True,
     }
     profiles = config["profiles"]
-    changed = migrated
+    changed = migrated or config_created
     existing_profile = profiles.get(args.profile)
     existing_compiler = (
         isinstance(existing_profile, dict)
@@ -1509,12 +1760,12 @@ def prepare_setup_config(args: argparse.Namespace) -> tuple[dict[str, object], b
     errors = validate_config(config)
     if errors:
         raise ValueError("Generated AgentsKM config is invalid: " + "; ".join(errors))
-    return config, changed, migrated
+    return config, changed, migrated, vault_initialized
 
 
 def command_setup(args: argparse.Namespace) -> int:
     with ConfigLock(timeout=args.lock_timeout):
-        config, changed, migrated = prepare_setup_config(args)
+        config, changed, migrated, vault_initialized = prepare_setup_config(args)
         content = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
         if changed and not args.dry_run:
             if migrated:
@@ -1531,12 +1782,14 @@ def command_setup(args: argparse.Namespace) -> int:
         "changed": changed,
         "dry_run": bool(args.dry_run),
         "migrated_legacy_config": migrated,
+        "vault_initialized": vault_initialized,
         "config_path": str(CONFIG_PATH),
         "profile": args.profile,
         "role": args.role,
         "vault_name": args.vault_name,
         "vault_path": config["vaults"][args.vault_name]["path"],
-        "restart_required": bool(changed and not args.dry_run),
+        "restart_required": False,
+        "next_action": "ready",
     }
     if args.dry_run:
         payload["preview"] = config
@@ -1546,8 +1799,8 @@ def command_setup(args: argparse.Namespace) -> int:
     print(f"AgentsKM setup: {state}")
     print(f"Profile: {args.profile} ({args.role})")
     print(f"Vault: {payload['vault_path']}")
-    if payload["restart_required"]:
-        print("Restart the Agent or reconnect its MCP server to load this Profile.")
+    if vault_initialized:
+        print("Initialized an empty AgentsKM Vault with local usage instructions.")
     return 0
 
 
@@ -1579,13 +1832,24 @@ def add_json_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
 
+def add_config_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--config", help="Override the user config file path (diagnostics and tests)")
+
+
+def add_runtime_args(parser: argparse.ArgumentParser) -> None:
+    add_config_arg(parser)
+    parser.add_argument("--profile", help="Select a configured Agent Profile")
+
+
 def main(argv: list[str] | None = None) -> int:
+    global CONFIG_PATH
     configure_utf8_stdio()
     parser = argparse.ArgumentParser(prog="km")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     setup_status = subparsers.add_parser("setup-status", help="Check AgentsKM configuration and Profile readiness")
     setup_status.add_argument("--profile")
+    add_config_arg(setup_status)
     add_json_arg(setup_status)
     setup_status.set_defaults(func=command_setup_status)
 
@@ -1598,6 +1862,7 @@ def main(argv: list[str] | None = None) -> int:
     setup.add_argument("--vault-name", default="main")
     setup.add_argument("--vault")
     setup.add_argument("--confirm-compiler", action="store_true")
+    add_config_arg(setup)
     add_json_arg(setup)
     setup.add_argument("--dry-run", action="store_true")
     setup.add_argument("--lock-timeout", type=float, default=10.0)
@@ -1605,33 +1870,40 @@ def main(argv: list[str] | None = None) -> int:
 
     configure = subparsers.add_parser("configure", help="Deprecated alias for contributor setup")
     configure.add_argument("--vault", required=True)
+    add_config_arg(configure)
     add_json_arg(configure)
     add_common_write_args(configure)
     configure.set_defaults(func=command_configure)
 
     status = subparsers.add_parser("status", help="Show repository counts")
+    add_runtime_args(status)
     add_json_arg(status)
     status.set_defaults(func=command_status)
 
     pending = subparsers.add_parser("pending", help="List active inbox candidates")
+    add_runtime_args(pending)
     add_json_arg(pending)
     pending.set_defaults(func=command_pending)
 
     reminders = subparsers.add_parser("reminders", help="List new or due knowledge reminders")
+    add_runtime_args(reminders)
     add_json_arg(reminders)
     reminders.set_defaults(func=command_reminders)
 
     search = subparsers.add_parser("search", help="Search wiki, inbox, raw, and docs")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=10)
+    add_runtime_args(search)
     add_json_arg(search)
     search.set_defaults(func=command_search)
 
     validate = subparsers.add_parser("validate", help="Validate required frontmatter")
+    add_runtime_args(validate)
     add_json_arg(validate)
     validate.set_defaults(func=command_validate)
 
     lint = subparsers.add_parser("lint", help="Check internal wiki links and misplaced pages")
+    add_runtime_args(lint)
     add_json_arg(lint)
     lint.set_defaults(func=command_lint)
 
@@ -1651,6 +1923,7 @@ def main(argv: list[str] | None = None) -> int:
     propose.add_argument("--body")
     propose.add_argument("--body-file")
     propose.add_argument("--slug")
+    add_runtime_args(propose)
     add_json_arg(propose)
     add_common_write_args(propose)
     propose.set_defaults(func=command_propose)
@@ -1662,6 +1935,7 @@ def main(argv: list[str] | None = None) -> int:
     review.add_argument("--agent-id", default="agent")
     review.add_argument("--reason", default="")
     review.add_argument("--until")
+    add_runtime_args(review)
     add_json_arg(review)
     add_common_write_args(review)
     review.set_defaults(func=command_review)
@@ -1673,6 +1947,7 @@ def main(argv: list[str] | None = None) -> int:
     promote.add_argument("--summary")
     promote.add_argument("--approved-by", required=True)
     promote.add_argument("--scope", required=True)
+    add_runtime_args(promote)
     add_json_arg(promote)
     add_common_write_args(promote)
     promote.set_defaults(func=command_promote)
@@ -1682,25 +1957,42 @@ def main(argv: list[str] | None = None) -> int:
     merge.add_argument("--target", required=True)
     merge.add_argument("--approved-by", required=True)
     merge.add_argument("--scope", required=True)
+    add_runtime_args(merge)
     add_json_arg(merge)
     add_common_write_args(merge)
     merge.set_defaults(func=command_merge)
 
     dashboard = subparsers.add_parser("dashboard", help="Generate an Obsidian-friendly review dashboard")
     dashboard.add_argument("--output", default="docs/review-dashboard.md")
+    add_runtime_args(dashboard)
     add_json_arg(dashboard)
     add_common_write_args(dashboard)
     dashboard.set_defaults(func=command_dashboard)
 
     qmd_readiness = subparsers.add_parser("qmd-readiness", help="Generate a qmd readiness report")
     qmd_readiness.add_argument("--output", default="docs/qmd-readiness.md")
+    add_runtime_args(qmd_readiness)
     add_json_arg(qmd_readiness)
     add_common_write_args(qmd_readiness)
     qmd_readiness.set_defaults(func=command_qmd_readiness)
 
+    doctor = subparsers.add_parser("doctor", help="Diagnose config, Profile, Vault, and runtime health")
+    add_runtime_args(doctor)
+    add_json_arg(doctor)
+    doctor.set_defaults(func=command_doctor)
+
+    update = subparsers.add_parser("update", help="Update AgentsKM from its configured GitHub source")
+    update.add_argument("--host", choices=["codex", "generic"])
+    update.add_argument("--marketplace", default=CODEX_MARKETPLACE)
+    update.add_argument("--check", action="store_true")
+    add_config_arg(update)
+    add_json_arg(update)
+    update.set_defaults(func=command_update)
+
     args = parser.parse_args(argv)
-    if args.command not in {"configure", "setup", "setup-status"}:
-        activate_runtime(resolve_runtime(CONFIG_PATH))
+    CONFIG_PATH = get_config_path(getattr(args, "config", None))
+    if args.command not in {"configure", "setup", "setup-status", "doctor", "update"}:
+        activate_runtime(resolve_runtime(CONFIG_PATH, getattr(args, "profile", None)))
         ensure_vault_root()
     return args.func(args)
 

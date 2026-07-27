@@ -4,23 +4,18 @@
 
 ## 1. 安装与 Setup
 
-终端用户安装插件或 MCP 包，不需要克隆 Toolkit。已有知识库可以通过 Git
-克隆、备份恢复或已有本地目录准备。首次为 Hermes 配置：
+终端用户安装插件或 MCP 包，不需要克隆 Toolkit。首次启动 MCP 时自动生成：
 
-```powershell
-python tools\km-cli\km.py setup-status --profile hermes-agent
-
-python tools\km-cli\km.py setup `
-  --profile hermes-agent `
-  --host hermes `
-  --role contributor `
-  --vault-name main `
-  --vault D:\path\to\agentskm-vault
+```text
+配置：%USERPROFILE%\.agentskm\config.json
+Vault：%USERPROFILE%\Documents\AgentsKM\vault
+Codex：codex / compiler
+Hermes、Claude、Cursor：各自 Profile / contributor
 ```
 
-配置保存到 `%USERPROFILE%\.agentskm\config.json`。MCP 缺少配置时只暴露
-`km_setup_status` 和 `km_setup_instructions`。Setup 完成后重启 Agent 或重新
-连接 MCP。
+默认 Vault 是带 README、Inbox、Wiki、Raw 和 docs 目录的空知识库。已有知识
+库可以通过 Git 克隆或备份恢复，然后把 `vaults.main.path` 改成其绝对路径。
+CLI 每次调用都从配置文件重新解析 Vault 和角色，因此改路径无需重启。
 
 Codex Compiler Profile 需要显式确认：
 
@@ -30,8 +25,17 @@ python tools\km-cli\km.py setup `
   --vault-name main --confirm-compiler
 ```
 
-日常只使用 `AGENTSKM_CONFIG` 和 `AGENTSKM_PROFILE`。旧环境变量和角色参数
-仅用于过渡兼容。
+Vault、Profile 与角色只以配置文件和 MCP 显式 Profile 参数为准，不使用环境变量。
+
+快速诊断与升级：
+
+```powershell
+python tools\km-cli\km.py doctor --profile codex
+python tools\km-cli\km.py update
+```
+
+升级会从 GitHub Git marketplace 或源码仓库获取最新版。升级后重新连接 MCP；
+不在写入中途终止 Agent 进程。Codex 中新建会话是可靠的冷重载边界。
 
 ## 2. 日常查询
 
@@ -53,11 +57,12 @@ python tools\km-cli\km.py propose `
   --value-reason "这条结论可跨项目复用" `
   --source-ref "conversation:task-id" `
   --suggested-target "wiki/concepts/example.md" `
-  --actor-role contributor
+  --agent-id codex `
+  --source-tool codex-mcp `
+  --source-session task-id
 
 python tools\km-cli\km.py review 000_Inbox/example.md `
-  --decision remind `
-  --actor-role reviewer
+  --decision remind
 ```
 
 然后询问用户：`沉淀 / 稍后 / 忽略`。
@@ -68,12 +73,11 @@ python tools\km-cli\km.py review 000_Inbox/example.md `
 
 ```powershell
 python tools\km-cli\km.py review 000_Inbox/example.md `
-  --decision approve --reviewed-by user --actor-role reviewer
+  --decision approve --reviewed-by user
 
 python tools\km-cli\km.py promote 000_Inbox/example.md `
   --approved-by user `
-  --scope "用户批准该候选毕业" `
-  --actor-role compiler
+  --scope "用户批准该候选毕业"
 ```
 
 目标已有页面时改用 `km merge --target <existing-wiki-page>`。
@@ -83,17 +87,20 @@ python tools\km-cli\km.py promote 000_Inbox/example.md `
 ```powershell
 python tools\km-cli\km.py review 000_Inbox/example.md `
   --decision snooze --until 2026-08-03 `
-  --reviewed-by user --actor-role reviewer
+  --reviewed-by user
 ```
 
 忽略：
 
 ```powershell
 python tools\km-cli\km.py review 000_Inbox/example.md `
-  --decision reject --reviewed-by user --actor-role reviewer
+  --decision reject --reviewed-by user
 ```
 
 Inbox 审计记录不删除。
+
+Inbox 为所有 Agent 共用。候选开头的 `agent_id`、`source_tool`、
+`source_session`、`source_refs` 标明来源；重复主题合并贡献 Agent 和会话来源。
 
 ## 5. 多 Agent
 
@@ -105,8 +112,7 @@ Inbox 审计记录不删除。
 ## 6. HTTP
 
 ```powershell
-$env:AGENTSKM_HTTP_TOKEN="local-secret"
-python adapters\http\km_http.py --host 127.0.0.1 --port 8765 --role contributor
+python adapters\http\km_http.py --host 127.0.0.1 --port 8765 --profile hermes-agent --token local-secret
 ```
 
 所有 POST 请求必须携带 `Authorization: Bearer <token>`。不要监听公网地址。

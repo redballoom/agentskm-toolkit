@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +11,7 @@ from typing import Any
 
 ROLES = {"contributor", "reviewer", "compiler"}
 DEFAULT_CONFIG = Path.home() / ".agentskm" / "config.json"
+DEFAULT_VAULT = Path.home() / "Documents" / "AgentsKM" / "vault"
 
 
 @dataclass(frozen=True)
@@ -36,13 +36,12 @@ class RuntimeContext:
         }
 
 
-def get_config_path() -> Path:
-    configured = os.environ.get("AGENTSKM_CONFIG")
-    return Path(configured or DEFAULT_CONFIG).expanduser().resolve()
+def get_config_path(explicit: str | Path | None = None) -> Path:
+    return Path(explicit or DEFAULT_CONFIG).expanduser().resolve()
 
 
 def requested_profile(explicit: str | None = None) -> str:
-    return (explicit or os.environ.get("AGENTSKM_PROFILE") or "").strip()
+    return (explicit or "").strip()
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -230,10 +229,19 @@ def resolve_runtime(config_path: Path, profile: str | None = None) -> RuntimeCon
     )
 
 
-def default_config(vault_name: str, vault_path: Path) -> dict[str, Any]:
+def default_config(
+    vault_name: str,
+    vault_path: Path,
+    *,
+    profile_name: str = "default",
+    display_name: str | None = None,
+    host: str = "unknown",
+    actor_id: str | None = None,
+    role: str = "contributor",
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
-        "default_profile": "default",
+        "default_profile": profile_name,
         "vaults": {
             vault_name: {
                 "path": str(vault_path),
@@ -241,11 +249,11 @@ def default_config(vault_name: str, vault_path: Path) -> dict[str, Any]:
             }
         },
         "profiles": {
-            "default": {
-                "display_name": "Unknown local agent",
-                "host": "unknown",
-                "actor_id": "local-default",
-                "role": "contributor",
+            profile_name: {
+                "display_name": display_name or profile_name,
+                "host": host,
+                "actor_id": actor_id or profile_name,
+                "role": role,
                 "vault": vault_name,
                 "enabled": True,
             }

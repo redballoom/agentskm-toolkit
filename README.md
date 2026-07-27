@@ -22,22 +22,24 @@ experiments; they are not plugin release sources. See
 
 ## Local Setup
 
-For source development, clone the toolkit. End users install the plugin/package
-and run Setup against an existing local Vault:
+For source development, clone the toolkit. End users install the plugin/package;
+the first MCP start creates a default config, Profile, and empty Vault:
 
 ```powershell
-python tools/km-cli/km.py setup `
-  --profile codex --host codex --role compiler `
-  --vault-name main --vault D:\path\to\agentskm-vault `
-  --confirm-compiler
+python tools/km-cli/km.py doctor --profile codex
 ```
 
 ## Codex Plugin
 
-The repository is a Codex marketplace source through
+The repository is a Codex Git marketplace source through
 `.agents/plugins/marketplace.json`. The installed plugin includes its own CLI,
 MCP adapter, and `agentskm-capture` Skill; it does not depend on paths outside
 the installed plugin cache.
+
+Install the marketplace from `https://github.com/redballoom/agentskm-toolkit`,
+then install `agentskm-toolkit@agentskm-local`. Later, `km update` refreshes the
+marketplace and reinstalls the plugin package. Start a new conversation or
+reconnect its MCP server to load updated code.
 
 ## Other Agents
 

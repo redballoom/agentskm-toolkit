@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,17 +20,27 @@ KM = ROOT / "tools" / "km-cli" / "km.py"
 PROTOCOL_VERSION = "2025-06-18"
 ROLE = "contributor"
 PROFILE = "default"
+HOST = "generic"
+CONFIG_PATH = ""
 SETUP_STATUS: dict[str, Any] = {}
 ROLE_ORDER = {"contributor": 1, "reviewer": 2, "compiler": 3}
 
 
 def main(argv: list[str] | None = None) -> int:
-    global PROFILE, ROLE, SETUP_STATUS
+    global PROFILE, ROLE, HOST, CONFIG_PATH, SETUP_STATUS
     parser = argparse.ArgumentParser(prog="agentskm-mcp")
-    parser.add_argument("--profile", default=os.environ.get("AGENTSKM_PROFILE", "default"))
+    parser.add_argument("--profile", default="default")
+    parser.add_argument("--host", default="generic")
+    parser.add_argument("--bootstrap-role", choices=sorted(ROLE_ORDER), default="contributor")
+    parser.add_argument("--config")
     args = parser.parse_args(argv)
     PROFILE = args.profile
+    HOST = args.host
+    CONFIG_PATH = str(Path(args.config).expanduser().resolve()) if args.config else ""
     SETUP_STATUS = load_setup_status(PROFILE)
+    if SETUP_STATUS.get("state") in {"config_missing", "profile_missing"}:
+        bootstrap_profile(PROFILE, HOST, args.bootstrap_role)
+        SETUP_STATUS = load_setup_status(PROFILE)
     if SETUP_STATUS.get("configured"):
         ROLE = str(SETUP_STATUS["role"])
     configure_utf8_stdio()
@@ -66,7 +75,7 @@ def handle_message(message: dict[str, Any]) -> None:
             },
             "serverInfo": {
                 "name": "agentskm",
-                "version": "0.3.0",
+                "version": "0.4.2",
             },
         })
         return
@@ -91,6 +100,7 @@ def handle_message(message: dict[str, Any]) -> None:
 
 
 def tools() -> list[dict[str, Any]]:
+    refresh_setup_status()
     setup_tool = {
         "name": "km_setup_status",
         "title": "Check AgentsKM Setup",
@@ -100,6 +110,8 @@ def tools() -> list[dict[str, Any]]:
     if not SETUP_STATUS.get("configured"):
         return [
             setup_tool,
+            doctor_tool(),
+            update_tool(),
             {
                 "name": "km_setup_instructions",
                 "title": "Show AgentsKM Setup Instructions",
@@ -109,6 +121,8 @@ def tools() -> list[dict[str, Any]]:
         ]
     available = [
         setup_tool,
+        doctor_tool(),
+        update_tool(),
         {
             "name": "km_status",
             "title": "AgentsKM Status",
@@ -212,6 +226,26 @@ def tools() -> list[dict[str, Any]]:
     return available
 
 
+def doctor_tool() -> dict[str, Any]:
+    return {
+        "name": "km_doctor",
+        "title": "Diagnose AgentsKM",
+        "description": "Report plugin version, Profile, config, Vault health, and the next action.",
+        "inputSchema": object_schema({}),
+    }
+
+
+def update_tool() -> dict[str, Any]:
+    return {
+        "name": "km_update",
+        "title": "Update AgentsKM",
+        "description": "Refresh AgentsKM from its configured GitHub marketplace or source checkout.",
+        "inputSchema": object_schema({
+            "check_only": {"type": "boolean", "default": False},
+        }),
+    }
+
+
 def approval_schema(require_target: bool) -> dict[str, Any]:
     required = ["candidate", "approved_by", "scope"]
     if require_target:
@@ -239,8 +273,17 @@ def object_schema(properties: dict[str, Any], required: list[str] | None = None)
 
 
 def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    refresh_setup_status()
     if name == "km_setup_status":
         return cli_result(["setup-status", "--profile", PROFILE, "--json"])
+    if name == "km_doctor":
+        return cli_result(["doctor", "--profile", PROFILE, "--json"])
+    if name == "km_update":
+        update_host = "codex" if HOST == "codex" else "generic"
+        update_args = ["update", "--host", update_host, "--json"]
+        if bool(args.get("check_only", False)):
+            update_args.append("--check")
+        return cli_result(update_args)
     if name == "km_setup_instructions" and not SETUP_STATUS.get("configured"):
         payload = {
             **SETUP_STATUS,
@@ -249,7 +292,7 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
             "cli_path": str(KM),
             "next_step": (
                 f'Run "{sys.executable}" "{KM}" setup --profile {PROFILE} '
-                "after the user confirms the Vault and role, then restart this MCP server."
+                f"--host {HOST} --role contributor. The default Vault is created automatically."
             ),
         }
         return tool_payload(payload)
@@ -284,15 +327,21 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def cli_result(cli_args: list[str]) -> dict[str, Any]:
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    env["AGENTSKM_PROFILE"] = PROFILE
+    command = cli_args[0]
+    final_args = list(cli_args)
+    runtime_commands = {
+        "status", "pending", "reminders", "search", "validate", "lint", "propose",
+        "review", "promote", "merge", "dashboard", "qmd-readiness",
+    }
+    if command in runtime_commands and "--profile" not in final_args:
+        final_args.extend(["--profile", PROFILE])
+    if CONFIG_PATH and "--config" not in final_args:
+        final_args.extend(["--config", CONFIG_PATH])
     proc = subprocess.run(
-        [sys.executable, str(KM), *cli_args],
+        [sys.executable, str(KM), *final_args],
         cwd=ROOT,
         text=True,
         encoding="utf-8",
-        env=env,
         capture_output=True,
     )
     payload = parse_cli_json(proc.stdout, proc.stderr)
@@ -329,6 +378,10 @@ def parse_cli_json(stdout: str, stderr: str) -> dict[str, Any]:
 
 
 def build_propose_args(data: dict[str, Any]) -> list[str]:
+    data = dict(data)
+    data.setdefault("agent_id", str(SETUP_STATUS.get("actor_id", PROFILE)))
+    data.setdefault("source_tool", f"{SETUP_STATUS.get('host', HOST)}-mcp")
+    data.setdefault("source_session", "unknown-session")
     args = [
         "propose",
         "--title", require_string(data, "title"),
@@ -445,15 +498,14 @@ def configure_utf8_stdio() -> None:
 
 
 def load_setup_status(profile: str) -> dict[str, Any]:
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    env["AGENTSKM_PROFILE"] = profile
+    args = ["setup-status", "--profile", profile, "--json"]
+    if CONFIG_PATH:
+        args.extend(["--config", CONFIG_PATH])
     proc = subprocess.run(
-        [sys.executable, str(KM), "setup-status", "--profile", profile, "--json"],
+        [sys.executable, str(KM), *args],
         cwd=ROOT,
         text=True,
         encoding="utf-8",
-        env=env,
         capture_output=True,
     )
     payload = parse_cli_json(proc.stdout, proc.stderr)
@@ -466,6 +518,38 @@ def load_setup_status(profile: str) -> dict[str, Any]:
             "message": payload.get("error", "AgentsKM setup check failed"),
         }
     return payload
+
+
+def refresh_setup_status() -> None:
+    global SETUP_STATUS, ROLE
+    SETUP_STATUS = load_setup_status(PROFILE)
+    if SETUP_STATUS.get("configured"):
+        ROLE = str(SETUP_STATUS["role"])
+
+
+def bootstrap_profile(profile: str, host: str, role: str) -> None:
+    args = [
+        "setup",
+        "--profile", profile,
+        "--host", host,
+        "--actor-id", profile,
+        "--role", role,
+        "--vault-name", "main",
+        "--json",
+    ]
+    if role == "compiler":
+        args.append("--confirm-compiler")
+    if CONFIG_PATH:
+        args.extend(["--config", CONFIG_PATH])
+    proc = subprocess.run(
+        [sys.executable, str(KM), *args],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        return
 
 
 if __name__ == "__main__":
