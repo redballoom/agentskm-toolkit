@@ -1,0 +1,20 @@
+{
+  "name": "agentskm-local",
+  "interface": {
+    "displayName": "AgentsKM Local"
+  },
+  "plugins": [
+    {
+      "name": "agentskm-toolkit",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agentskm-toolkit"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

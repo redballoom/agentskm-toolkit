@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "agentskm": {
+      "command": "python",
+      "args": [
+        "../../../../adapters/mcp/km_mcp.py"
+      ]
+    }
+  }
+}

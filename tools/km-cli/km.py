@@ -1,0 +1,1146 @@
+#!/usr/bin/env python3
+"""Local KM CLI for AgentsKM.
+
+The CLI is deliberately small and deterministic. It is the only supported path
+for multi-agent writes once adapters are added.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import sys
+import time
+from dataclasses import dataclass
+from datetime import date, datetime
+from pathlib import Path
+
+
+TOOL_ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("AGENTSKM_DATA_ROOT", TOOL_ROOT)).expanduser().resolve()
+KM_DIR = ROOT / ".km"
+LOCK_DIR = KM_DIR / "locks"
+TX_DIR = KM_DIR / "transactions"
+SKIP_DIRS = {".git", ".obsidian", ".learnings", ".km"}
+WIKI_DIRS = {
+    "entity": "wiki/entities",
+    "concept": "wiki/concepts",
+    "comparison": "wiki/comparisons",
+    "query": "wiki/queries",
+    "guide": "wiki/queries",
+    "note": "wiki/concepts",
+    "summary": "wiki/concepts",
+}
+WIKI_SECTION = {
+    "entity": "Entities",
+    "concept": "Concepts",
+    "comparison": "Comparisons",
+    "query": "Queries",
+    "guide": "Queries",
+    "note": "Concepts",
+    "summary": "Concepts",
+}
+WIKI_REQUIRED = {"title", "created", "updated", "type", "tags", "source_refs"}
+INBOX_REQUIRED = {"title", "created", "updated", "status", "type", "tags", "confidence"}
+TERMINAL_INBOX = {"graduated", "merged", "rejected"}
+EXAMPLE_WIKILINKS = {
+    "excel-to-web-form-automation",
+    "shadow-dom-element-scraping",
+    "wikilinks",
+}
+LINT_REFERENCE_DOCS = {
+    "docs/AgentsKM-P0-基线盘点报告.md",
+}
+QMD_READINESS_QUERIES = [
+    "领星 API 怎么鉴权",
+    "WSL 如何连接 Windows Chrome CDP",
+    "Docsify API 提取方法论",
+]
+QUERY_STOPWORDS = {
+    "怎么", "如何", "怎样", "请问", "请", "一下", "什么", "为什么", "是否",
+    "可以", "能否", "如何连接", "怎么连接",
+}
+
+
+@dataclass
+class Page:
+    path: Path
+    rel: str
+    text: str
+    meta: dict[str, str]
+
+    @property
+    def title(self) -> str:
+        if self.meta.get("title"):
+            return self.meta["title"]
+        for line in self.text.splitlines():
+            if line.startswith("# "):
+                return line[2:].strip()
+        return self.path.stem
+
+    @property
+    def status(self) -> str:
+        return self.meta.get("status", "")
+
+    @property
+    def layer(self) -> str:
+        if self.rel.startswith("wiki/"):
+            return "wiki"
+        if self.rel.startswith("000_Inbox/"):
+            return "inbox"
+        if self.rel.startswith("raw/"):
+            return "raw"
+        if self.rel.startswith("docs/"):
+            return "docs"
+        if self.rel.startswith("tools/"):
+            return "tools"
+        return "root"
+
+
+def page_summary(page: Page, snippet: str | None = None) -> dict[str, object]:
+    data: dict[str, object] = {
+        "path": page.rel,
+        "layer": page.layer,
+        "title": page.title,
+        "status": page.status,
+        "type": page.meta.get("type", ""),
+        "tags": meta_list(page.meta, "tags"),
+        "source_refs": meta_list(page.meta, "source_refs"),
+    }
+    if snippet is not None:
+        data["snippet"] = snippet
+    suggested_target = page.meta.get("suggested_target", "")
+    if suggested_target:
+        data["suggested_target"] = suggested_target
+    return data
+
+
+def emit_json(data: dict[str, object]) -> None:
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def wants_json(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "json", False))
+
+
+class RepoLock:
+    def __init__(self, name: str = "repo", timeout: float = 10.0) -> None:
+        self.path = LOCK_DIR / f"{name}.lock"
+        self.timeout = timeout
+        self.fd: int | None = None
+
+    def __enter__(self) -> "RepoLock":
+        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        start = time.monotonic()
+        while True:
+            try:
+                self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                payload = f"pid={os.getpid()} created={datetime.now().isoformat(timespec='seconds')}\n"
+                os.write(self.fd, payload.encode("utf-8"))
+                return self
+            except FileExistsError:
+                if time.monotonic() - start >= self.timeout:
+                    raise RuntimeError(f"Could not acquire lock: {self.path}")
+                time.sleep(0.2)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self.fd is not None:
+            os.close(self.fd)
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+class Transaction:
+    def __init__(self, name: str) -> None:
+        self.id = f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-{name}"
+        self.dir = TX_DIR / self.id
+        self.backups = self.dir / "backups"
+        self.touched: set[Path] = set()
+
+    def __enter__(self) -> "Transaction":
+        self.backups.mkdir(parents=True, exist_ok=False)
+        return self
+
+    def backup(self, path: Path) -> None:
+        path = path.resolve()
+        if path in self.touched:
+            return
+        self.touched.add(path)
+        if path.exists():
+            rel = path.relative_to(ROOT)
+            backup_path = self.backups / rel
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup_path)
+
+    def write_text(self, path: Path, text: str) -> None:
+        path = resolve_repo_path(path)
+        self.backup(path)
+        atomic_write(path, text)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        rollback_errors: list[str] = []
+        if exc_type:
+            rollback_errors = self.rollback()
+        status = {
+            "id": self.id,
+            "finished_at": datetime.now().isoformat(timespec="seconds"),
+            "status": "failed" if exc_type else "committed",
+            "touched": [p.relative_to(ROOT).as_posix() for p in sorted(self.touched)],
+            "rollback_errors": rollback_errors,
+        }
+        (self.dir / "status.json").write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def rollback(self) -> list[str]:
+        errors: list[str] = []
+        for path in sorted(self.touched, reverse=True):
+            try:
+                rel = path.relative_to(ROOT)
+                backup_path = self.backups / rel
+                if backup_path.exists():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup_path, path)
+                elif path.exists():
+                    path.unlink()
+            except OSError as exc:
+                errors.append(f"{path.relative_to(ROOT).as_posix()}: {exc}")
+        return errors
+
+
+def atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    temp.write_text(text, encoding="utf-8", newline="\n")
+    os.replace(temp, path)
+
+
+def resolve_repo_path(path: Path | str) -> Path:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = ROOT / candidate
+    resolved = candidate.resolve()
+    root = ROOT.resolve()
+    if resolved != root and root not in resolved.parents:
+        raise ValueError(f"Path is outside repository: {path}")
+    return resolved
+
+
+def iter_markdown() -> list[Page]:
+    pages: list[Page] = []
+    for path in ROOT.rglob("*.md"):
+        if any(part in SKIP_DIRS for part in path.relative_to(ROOT).parts):
+            continue
+        text = path.read_text(encoding="utf-8")
+        rel = path.relative_to(ROOT).as_posix()
+        pages.append(Page(path=path, rel=rel, text=text, meta=parse_frontmatter(text)))
+    return sorted(pages, key=lambda page: page.rel)
+
+
+def parse_frontmatter(text: str) -> dict[str, str]:
+    if not text.startswith("---\n"):
+        return {}
+    match = re.match(r"---\n(.*?)\n---\n", text, re.DOTALL)
+    if not match:
+        return {}
+    meta: dict[str, str] = {}
+    current_key = ""
+    for raw_line in match.group(1).splitlines():
+        line = raw_line.rstrip()
+        if not line or line.lstrip().startswith("#"):
+            continue
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_-]*:", line):
+            key, value = line.split(":", 1)
+            current_key = key.strip()
+            meta[current_key] = value.strip()
+        elif current_key and line.lstrip().startswith("- "):
+            prior = meta.get(current_key, "")
+            item = line.strip()[2:].strip()
+            meta[current_key] = f"{prior}, {item}".strip(", ")
+    return meta
+
+
+def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    if not text.startswith("---\n"):
+        return {}, text
+    match = re.match(r"---\n(.*?)\n---\n?", text, re.DOTALL)
+    if not match:
+        return {}, text
+    return parse_frontmatter(text), text[match.end():]
+
+
+def render_page(meta: dict[str, object], body: str) -> str:
+    lines = ["---"]
+    for key, value in meta.items():
+        if isinstance(value, list):
+            lines.append(f"{key}:")
+            for item in value:
+                lines.append(f"  - {item}")
+        else:
+            lines.append(f"{key}: {value}")
+    lines.append("---")
+    return "\n".join(lines) + "\n\n" + body.lstrip()
+
+
+def meta_list(meta: dict[str, str], key: str) -> list[str]:
+    value = meta.get(key, "").strip()
+    if not value:
+        return []
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    return [item.strip().strip("'\"") for item in value.split(",") if item.strip()]
+
+
+def today() -> str:
+    return date.today().isoformat()
+
+
+def slugify(value: str) -> str:
+    raw = value.casefold().strip()
+    raw = re.sub(r"[^a-z0-9]+", "-", raw)
+    return raw.strip("-")
+
+
+def normalize_for_fingerprint(*parts: object) -> str:
+    text = "\n".join(str(part) for part in parts if part is not None)
+    return re.sub(r"\s+", " ", text.casefold()).strip()
+
+
+def fingerprint(*parts: object) -> str:
+    return hashlib.sha256(normalize_for_fingerprint(*parts).encode("utf-8")).hexdigest()
+
+
+def next_candidate_id() -> str:
+    prefix = f"kmc-{today().replace('-', '')}-"
+    max_seq = 0
+    for page in iter_markdown():
+        candidate_id = page.meta.get("id", "")
+        if candidate_id.startswith(prefix):
+            try:
+                max_seq = max(max_seq, int(candidate_id.rsplit("-", 1)[1]))
+            except ValueError:
+                continue
+    return f"{prefix}{max_seq + 1:04d}"
+
+
+def find_page_by_rel(rel: str) -> Page | None:
+    rel = rel.replace("\\", "/").strip("/")
+    for page in iter_markdown():
+        if page.rel == rel:
+            return page
+    return None
+
+
+def command_status(args: argparse.Namespace) -> int:
+    pages = iter_markdown()
+    layers = {"wiki": 0, "inbox": 0, "raw": 0, "docs": 0, "tools": 0, "root": 0}
+    for page in pages:
+        layers[page.layer] += 1
+    data = {
+        "ok": True,
+        "layers": layers,
+        "total_markdown": len(pages),
+    }
+    if wants_json(args):
+        emit_json(data)
+        return 0
+    print("AgentsKM status")
+    for key in ("wiki", "inbox", "raw", "docs", "tools", "root"):
+        print(f"- {key}: {layers[key]}")
+    print(f"- total markdown: {len(pages)}")
+    return 0
+
+
+def command_pending(args: argparse.Namespace) -> int:
+    pages = [page for page in iter_markdown() if page.layer == "inbox"]
+    active = [
+        page for page in pages
+        if page.status not in TERMINAL_INBOX
+    ]
+    items = [page_summary(page) for page in active]
+    if wants_json(args):
+        emit_json({"ok": True, "count": len(items), "candidates": items})
+        return 0
+    if not active:
+        print("No pending inbox candidates.")
+        return 0
+    for page in active:
+        status = page.status or "unknown"
+        target = page.meta.get("suggested_target", "")
+        suffix = f" -> {target}" if target else ""
+        print(f"{status}: {page.rel} | {page.title}{suffix}")
+    return 0
+
+
+def command_search(args: argparse.Namespace) -> int:
+    payload, raw_matches = search_pages(args.query, limit=args.limit)
+    if wants_json(args):
+        emit_json(payload)
+        return 0
+    for _, page, snippet in raw_matches:
+        status = f" status={page.status}" if page.status else ""
+        print(f"[{page.layer}]{status} {page.rel} | {page.title}")
+        print(f"  {snippet}")
+    if not raw_matches:
+        print("No matches.")
+    return 0
+
+
+def compact_snippet(text: str, idx: int, width: int) -> str:
+    start = max(0, idx - 45)
+    end = min(len(text), idx + width + 70)
+    snippet = text[start:end].replace("\n", " ")
+    return re.sub(r"\s+", " ", snippet).strip()
+
+
+def command_validate(args: argparse.Namespace) -> int:
+    issues: list[str] = []
+    for page in iter_markdown():
+        if page.layer == "wiki":
+            missing = sorted(WIKI_REQUIRED - page.meta.keys())
+            if missing:
+                issues.append(f"{page.rel}: missing wiki frontmatter fields: {', '.join(missing)}")
+            if page.meta.get("status") not in {"active", "draft", "archived"}:
+                issues.append(f"{page.rel}: wiki status must be active, draft, or archived")
+        if page.layer == "inbox":
+            missing = sorted(INBOX_REQUIRED - page.meta.keys())
+            if missing:
+                issues.append(f"{page.rel}: missing inbox frontmatter fields: {', '.join(missing)}")
+            if page.status != "pending-source-review" and not page.meta.get("source_refs"):
+                issues.append(f"{page.rel}: source_refs is required unless pending-source-review")
+    if issues:
+        if wants_json(args):
+            emit_json({"ok": False, "issues": issues})
+            return 1
+        print("\n".join(issues))
+        return 1
+    if wants_json(args):
+        emit_json({"ok": True, "issues": []})
+        return 0
+    print("Validation passed.")
+    return 0
+
+
+def command_lint(args: argparse.Namespace) -> int:
+    pages = iter_markdown()
+    known = build_known_targets(pages)
+    issues: list[str] = []
+    for page in pages:
+        if page.rel in LINT_REFERENCE_DOCS:
+            continue
+        for target in re.findall(r"\[\[([^\]|#]+)", page.text):
+            normalized = normalize_target(target)
+            if page.rel in {"purpose.md", "SCHEMA.md", "docs/AgentsKM-架构改造执行计划.md"} and normalized in EXAMPLE_WIKILINKS:
+                continue
+            if normalized not in known:
+                issues.append(f"{page.rel}: broken wikilink [[{target}]]")
+    root_concepts = ROOT / "concepts"
+    if root_concepts.exists():
+        leftovers = list(root_concepts.rglob("*.md"))
+        for path in leftovers:
+            rel = path.relative_to(ROOT).as_posix()
+            issues.append(f"{rel}: formal page remains outside wiki/")
+    if issues:
+        if wants_json(args):
+            emit_json({"ok": False, "issues": issues})
+            return 1
+        print("\n".join(issues))
+        return 1
+    if wants_json(args):
+        emit_json({"ok": True, "issues": []})
+        return 0
+    print("Lint passed.")
+    return 0
+
+
+def build_known_targets(pages: list[Page]) -> set[str]:
+    known: set[str] = set()
+    for page in pages:
+        rel_no_ext = page.rel[:-3] if page.rel.endswith(".md") else page.rel
+        known.add(rel_no_ext.casefold())
+        known.add(Path(rel_no_ext).name.casefold())
+        if page.layer == "wiki":
+            known.add(page.path.stem.casefold())
+    return known
+
+
+def normalize_target(target: str) -> str:
+    target = target.strip().replace("\\", "/")
+    if target.endswith(".md"):
+        target = target[:-3]
+    return target.casefold()
+
+
+def command_propose(args: argparse.Namespace) -> int:
+    source_refs = args.source_ref or []
+    tags = unique(["implicit-capture", *parse_csv(args.tags)])
+    body = load_body(args.body, args.body_file, args.title, args.value_reason)
+    candidate_id = next_candidate_id()
+    candidate_fingerprint = fingerprint(args.title, body, args.value_reason, source_refs)
+
+    duplicate = find_duplicate_fingerprint(candidate_fingerprint)
+    if duplicate:
+        if wants_json(args):
+            emit_json({
+                "ok": True,
+                "duplicate": True,
+                "candidate": page_summary(duplicate),
+                "fingerprint": candidate_fingerprint,
+            })
+            return 0
+        print(f"Duplicate candidate fingerprint: {duplicate.rel}")
+        return 0
+
+    slug = slugify(args.slug or args.title) or candidate_id
+    target_path = ROOT / "000_Inbox" / f"{slug}.md"
+    if target_path.exists():
+        target_path = ROOT / "000_Inbox" / f"{slug}-{candidate_id}.md"
+
+    status = "pending" if source_refs else "pending-source-review"
+    meta: dict[str, object] = {
+        "id": candidate_id,
+        "title": args.title,
+        "created": today(),
+        "updated": today(),
+        "status": status,
+        "type": args.type,
+        "tags": tags,
+        "agent_id": args.agent_id,
+        "source_tool": args.source_tool,
+        "source_session": args.source_session,
+        "source_refs": source_refs,
+        "suggested_action": args.suggested_action,
+        "suggested_target": args.suggested_target,
+        "value_reason": args.value_reason,
+        "confidence": args.confidence,
+        "sensitivity": args.sensitivity,
+        "fingerprint": candidate_fingerprint,
+    }
+    content = render_page(meta, body)
+    rel = target_path.relative_to(ROOT).as_posix()
+    if args.dry_run:
+        if wants_json(args):
+            emit_json({
+                "ok": True,
+                "dry_run": True,
+                "candidate_path": rel,
+                "candidate": meta,
+                "content": content,
+            })
+            return 0
+        print(f"DRY RUN propose -> {rel}")
+        print(content)
+        return 0
+
+    with RepoLock(timeout=args.lock_timeout), Transaction("propose") as tx:
+        tx.write_text(target_path, content)
+        append_log(tx, "propose", args.title, [
+            f"candidate: {rel}",
+            f"status: {status}",
+            f"suggested_target: {args.suggested_target or '(none)'}",
+            f"agent_id: {args.agent_id}",
+        ])
+    if wants_json(args):
+        emit_json({
+            "ok": True,
+            "created": True,
+            "candidate_path": rel,
+            "status": status,
+            "fingerprint": candidate_fingerprint,
+        })
+        return 0
+    print(f"Created candidate: {rel}")
+    return 0
+
+
+def command_promote(args: argparse.Namespace) -> int:
+    candidate = load_candidate(args.candidate)
+    if candidate.status in TERMINAL_INBOX:
+        target = candidate.meta.get("graduated_to") or candidate.meta.get("merged_to")
+        if wants_json(args):
+            emit_json({
+                "ok": True,
+                "already_terminal": True,
+                "status": candidate.status,
+                "candidate": page_summary(candidate),
+                "target": target,
+            })
+            return 0
+        if target:
+            print(f"Candidate already {candidate.status}: {target}")
+            return 0
+        print(f"Candidate already {candidate.status}.")
+        return 0
+    if candidate.meta.get("sensitivity") == "secret":
+        raise ValueError("Refusing to promote candidate with sensitivity=secret")
+    source_refs = meta_list(candidate.meta, "source_refs")
+    if not source_refs:
+        raise ValueError("Refusing to promote candidate without source_refs")
+
+    target_rel = normalize_target_path(args.target or candidate.meta.get("suggested_target", ""), candidate.meta)
+    target_path = resolve_repo_path(target_rel)
+    if target_path.exists():
+        existing = find_page_by_rel(target_rel)
+        if existing and existing.meta.get("origin_candidate") == candidate.rel:
+            mark_candidate_terminal(candidate, target_rel, args, dry_run=args.dry_run)
+            if wants_json(args):
+                emit_json({
+                    "ok": True,
+                    "already_represented": True,
+                    "candidate": page_summary(candidate),
+                    "target": target_rel,
+                })
+                return 0
+            print(f"Candidate already represented in wiki: {target_rel}")
+            return 0
+        raise FileExistsError(f"Target already exists: {target_rel}")
+
+    _, candidate_body = split_frontmatter(candidate.text)
+    wiki_meta: dict[str, object] = {
+        "title": args.title or candidate.title,
+        "created": candidate.meta.get("created", today()),
+        "updated": today(),
+        "type": candidate.meta.get("type", "concept"),
+        "status": "active",
+        "tags": [tag for tag in meta_list(candidate.meta, "tags") if tag != "implicit-capture"],
+        "source_refs": source_refs,
+        "origin_candidate": candidate.rel,
+        "confidence": candidate.meta.get("confidence", "medium"),
+    }
+    wiki_body = candidate_body if candidate_body.strip() else f"# {candidate.title}\n"
+    wiki_text = render_page(wiki_meta, wiki_body)
+
+    updated_candidate_text = render_page(
+        promoted_candidate_meta(candidate.meta, target_rel, args),
+        candidate_body,
+    )
+    index_text = update_index(target_rel, str(wiki_meta["title"]), str(wiki_meta["type"]), args.summary or candidate.meta.get("value_reason", "已审核正式知识"))
+    log_lines = [
+        f"candidate: {candidate.rel}",
+        f"target: {target_rel}",
+        f"approved_by: {args.approved_by}",
+        f"scope: {args.scope}",
+    ]
+
+    if args.dry_run:
+        if wants_json(args):
+            emit_json({
+                "ok": True,
+                "dry_run": True,
+                "candidate_path": candidate.rel,
+                "target": target_rel,
+                "wiki_meta": wiki_meta,
+                "content": wiki_text,
+            })
+            return 0
+        print(f"DRY RUN promote {candidate.rel} -> {target_rel}")
+        print(wiki_text)
+        return 0
+
+    with RepoLock(timeout=args.lock_timeout), Transaction("promote") as tx:
+        tx.write_text(target_path, wiki_text)
+        tx.write_text(candidate.path, updated_candidate_text)
+        tx.write_text(ROOT / "index.md", index_text)
+        append_log(tx, "promote", str(wiki_meta["title"]), log_lines)
+    if wants_json(args):
+        emit_json({
+            "ok": True,
+            "promoted": True,
+            "candidate_path": candidate.rel,
+            "target": target_rel,
+            "title": wiki_meta["title"],
+        })
+        return 0
+    print(f"Promoted candidate: {candidate.rel} -> {target_rel}")
+    return 0
+
+
+def command_dashboard(args: argparse.Namespace) -> int:
+    pages = iter_markdown()
+    output_rel = args.output.replace("\\", "/")
+    output_path = resolve_repo_path(output_rel)
+    text = render_dashboard(pages)
+    if args.dry_run:
+        if wants_json(args):
+            emit_json({"ok": True, "dry_run": True, "output": output_rel, "content": text})
+            return 0
+        print(text)
+        return 0
+
+    with RepoLock(timeout=args.lock_timeout), Transaction("dashboard") as tx:
+        tx.write_text(output_path, text)
+        append_log(tx, "dashboard", "Obsidian 审核面板", [
+            f"output: {output_rel}",
+            "source: km dashboard",
+        ])
+    if wants_json(args):
+        emit_json({"ok": True, "output": output_rel})
+        return 0
+    print(f"Updated dashboard: {output_rel}")
+    return 0
+
+
+def command_qmd_readiness(args: argparse.Namespace) -> int:
+    pages = iter_markdown()
+    wiki = [page for page in pages if page.layer == "wiki"]
+    raw = [page for page in pages if page.layer == "raw"]
+    index = {
+        "wiki_pages": len(wiki),
+        "raw_sources": len(raw),
+        "qmd_available": shutil.which("qmd") is not None,
+        "thresholds": {
+            "wiki_pages": 500,
+            "raw_sources": 1000,
+            "top5_hit_rate": 0.90,
+        },
+    }
+    query_results = [qmd_query_result(query) for query in QMD_READINESS_QUERIES]
+    top5_hit_rate = sum(1 for item in query_results if item["hit"]) / max(len(query_results), 1)
+    ready = (
+        index["qmd_available"]
+        and index["wiki_pages"] >= index["thresholds"]["wiki_pages"]
+        and index["raw_sources"] >= index["thresholds"]["raw_sources"]
+        and top5_hit_rate >= index["thresholds"]["top5_hit_rate"]
+    )
+    report = {
+        "ok": True,
+        "ready": ready,
+        "index": index,
+        "top5_hit_rate": top5_hit_rate,
+        "queries": query_results,
+        "recommendation": "enable qmd" if ready else "defer qmd and continue using base search",
+    }
+    text = render_qmd_readiness(report)
+    if args.output:
+        output_path = resolve_repo_path(args.output)
+        if args.dry_run:
+            if wants_json(args):
+                emit_json({"ok": True, "dry_run": True, "output": args.output, "content": text, **report})
+                return 0
+            print(text)
+            return 0
+        with RepoLock(timeout=args.lock_timeout), Transaction("qmd-readiness") as tx:
+            tx.write_text(output_path, text)
+            append_log(tx, "qmd-readiness", "QMD 就绪报告", [
+                f"output: {args.output}",
+                f"ready: {ready}",
+            ])
+        report["output"] = args.output
+    if wants_json(args):
+        emit_json(report)
+        return 0
+    print(text)
+    return 0
+
+
+def render_dashboard(pages: list[Page]) -> str:
+    wiki = [page for page in pages if page.layer == "wiki"]
+    inbox = [page for page in pages if page.layer == "inbox"]
+    raw = [page for page in pages if page.layer == "raw"]
+    active_inbox = [page for page in inbox if page.status not in TERMINAL_INBOX]
+    graduated = [page for page in inbox if page.status in {"graduated", "merged"}]
+    rejected = [page for page in inbox if page.status == "rejected"]
+
+    lines = [
+        "# AgentsKM 审核面板",
+        "",
+        "> 由 `python tools/km-cli/km.py dashboard` 生成。用于 Obsidian 中快速审核 Inbox、查看正式 Wiki 和 Raw 来源。",
+        "",
+        f"更新时间：{datetime.now().isoformat(timespec='seconds')}",
+        "",
+        "## 总览",
+        "",
+        "| 层级 | 数量 |",
+        "|---|---:|",
+        f"| Wiki 正式页 | {len(wiki)} |",
+        f"| Inbox 待处理 | {len(active_inbox)} |",
+        f"| Inbox 已毕业/已合并 | {len(graduated)} |",
+        f"| Inbox 已拒绝 | {len(rejected)} |",
+        f"| Raw 来源 | {len(raw)} |",
+        "",
+        "## 待处理 Inbox",
+        "",
+    ]
+    lines.extend(render_page_table(active_inbox, include_target=True) if active_inbox else ["暂无待处理候选。"])
+    lines.extend([
+        "",
+        "## 已毕业或已合并 Inbox",
+        "",
+    ])
+    lines.extend(render_page_table(graduated, include_target=True) if graduated else ["暂无已毕业记录。"])
+    lines.extend([
+        "",
+        "## 正式 Wiki",
+        "",
+    ])
+    lines.extend(render_page_table(wiki, include_target=False) if wiki else ["暂无正式 Wiki 页。"])
+    lines.extend([
+        "",
+        "## Raw 来源",
+        "",
+    ])
+    lines.extend(render_page_table(raw, include_target=False) if raw else ["暂无 Raw 来源。"])
+    lines.extend([
+        "",
+        "## 操作入口",
+        "",
+        "```powershell",
+        "python tools\\km-cli\\km.py pending",
+        "python tools\\km-cli\\km.py search \"领星 API 鉴权\"",
+        "python tools\\km-cli\\km.py validate",
+        "python tools\\km-cli\\km.py lint",
+        "```",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def qmd_query_result(query: str) -> dict[str, object]:
+    payload, _ = search_pages(query, limit=5)
+    hit = bool(payload["matches"]) and payload["matches"][0]["layer"] == "wiki"
+    return {
+        "query": query,
+        "hit": hit,
+        "top_result": payload["matches"][0]["path"] if payload["matches"] else "",
+        "layer": payload["matches"][0]["layer"] if payload["matches"] else "",
+    }
+
+
+def render_qmd_readiness(report: dict[str, object]) -> str:
+    index = report["index"]
+    lines = [
+        "# QMD Readiness",
+        "",
+        f"- QMD available: {index['qmd_available']}",
+        f"- Wiki pages: {index['wiki_pages']} / {index['thresholds']['wiki_pages']}",
+        f"- Raw sources: {index['raw_sources']} / {index['thresholds']['raw_sources']}",
+        f"- Top-5 hit rate: {report['top5_hit_rate']:.0%} / {index['thresholds']['top5_hit_rate']:.0%}",
+        f"- Recommendation: {report['recommendation']}",
+        "",
+        "## Fixed Queries",
+        "",
+        "| Query | Hit | Top Result | Layer |",
+        "|---|---|---|---|",
+    ]
+    for item in report["queries"]:
+        lines.append(
+            f"| {escape_table(item['query'])} | {item['hit']} | {escape_table(item['top_result'] or '-')} | {escape_table(item['layer'] or '-')} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def search_pages(query: str, limit: int = 10) -> tuple[dict[str, object], list[tuple[int, Page, str]]]:
+    normalized = query.casefold()
+    tokens = tokenize_query(query)
+    layer_rank = {"wiki": 0, "inbox": 1, "raw": 2}
+    matches: list[tuple[int, int, Page, str]] = []
+    for page in iter_markdown():
+        if page.layer not in layer_rank:
+            continue
+        score, idx = score_page(page, normalized, tokens)
+        if score <= 0 or idx < 0:
+            continue
+        snippet = compact_snippet(page.text, idx, len(query))
+        matches.append((score, layer_rank[page.layer], page, snippet))
+    limited = sorted(matches, key=lambda item: (-item[0], item[1], item[2].rel))[:limit]
+    payload = {
+        "ok": True,
+        "query": query,
+        "count": len(limited),
+        "matches": [dict(page_summary(page, snippet), score=score) for score, _, page, snippet in limited],
+    }
+    raw_matches = [(rank, page, snippet) for score, rank, page, snippet in limited]
+    return payload, raw_matches
+
+
+def tokenize_query(query: str) -> list[str]:
+    tokens: list[str] = []
+    for chunk in re.findall(r"[A-Za-z0-9]+|[\u4e00-\u9fff]+", query.casefold()):
+        if chunk in QUERY_STOPWORDS:
+            continue
+        tokens.append(chunk)
+        for prefix in ("怎么", "如何", "怎样", "请问", "请"):
+            if chunk.startswith(prefix) and len(chunk) > len(prefix):
+                remainder = chunk[len(prefix):]
+                if remainder and remainder not in QUERY_STOPWORDS:
+                    tokens.append(remainder)
+    return unique(tokens)
+
+
+def score_page(page: Page, normalized_query: str, tokens: list[str]) -> tuple[int, int]:
+    title = page.title.casefold()
+    rel = page.rel.casefold()
+    tags = " ".join(meta_list(page.meta, "tags")).casefold()
+    refs = " ".join(meta_list(page.meta, "source_refs")).casefold()
+    body = page.text.casefold()
+    blob = "\n".join([title, rel, tags, refs, body[:5000]])
+    score = 0
+    best_idx = -1
+
+    if normalized_query in title:
+        score += 50
+        best_idx = body.find(normalized_query)
+    elif normalized_query in body:
+        score += 25
+        best_idx = body.find(normalized_query)
+
+    if tokens:
+        token_hits = 0
+        for token in tokens:
+            token_idx = blob.find(token)
+            if token_idx >= 0:
+                token_hits += 1
+                if best_idx < 0:
+                    best_idx = body.find(token)
+                if token in title:
+                    score += 15
+                elif token in rel or token in tags:
+                    score += 10
+                elif token in refs:
+                    score += 6
+                else:
+                    score += 4
+        if token_hits == len(tokens):
+            score += 20
+    if best_idx < 0:
+        for token in tokens or [normalized_query]:
+            idx = body.find(token)
+            if idx >= 0:
+                best_idx = idx
+                break
+    return score, best_idx
+
+
+def render_page_table(pages: list[Page], include_target: bool) -> list[str]:
+    header = "| 状态 | 类型 | 页面 | 标签 | 来源/目标 |" if include_target else "| 状态 | 类型 | 页面 | 标签 | 来源 |"
+    lines = [header, "|---|---|---|---|---|"]
+    for page in sorted(pages, key=lambda item: (item.status, item.rel)):
+        status = page.status or "-"
+        page_type = page.meta.get("type", "-")
+        link = f"[{escape_table(page.title)}](../{page.rel})" if page.rel.startswith(("wiki/", "raw/", "000_Inbox/")) else f"[{escape_table(page.title)}]({page.rel})"
+        tags = ", ".join(meta_list(page.meta, "tags")) or "-"
+        refs = ", ".join(meta_list(page.meta, "source_refs"))
+        target = page.meta.get("suggested_target") or page.meta.get("graduated_to") or page.meta.get("merged_to")
+        last = target or refs or "-"
+        lines.append(f"| {escape_table(status)} | {escape_table(page_type)} | {link} | {escape_table(tags)} | {escape_table(last)} |")
+    return lines
+
+
+def escape_table(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def load_candidate(value: str) -> Page:
+    rel = value.replace("\\", "/").strip()
+    if not rel.startswith("000_Inbox/"):
+        rel = f"000_Inbox/{rel}"
+    if not rel.endswith(".md"):
+        rel = f"{rel}.md"
+    page = find_page_by_rel(rel)
+    if not page:
+        raise FileNotFoundError(f"Candidate not found: {rel}")
+    if page.layer != "inbox":
+        raise ValueError(f"Not an inbox candidate: {rel}")
+    return page
+
+
+def normalize_target_path(value: str, meta: dict[str, str]) -> str:
+    if not value:
+        page_type = meta.get("type", "concept")
+        folder = WIKI_DIRS.get(page_type, "wiki/concepts")
+        slug = slugify(meta.get("title", "")) or Path(meta.get("id", "candidate")).stem
+        value = f"{folder}/{slug}.md"
+    value = value.replace("\\", "/").strip("/")
+    if not value.endswith(".md"):
+        value = f"{value}.md"
+    if not any(value.startswith(prefix + "/") for prefix in set(WIKI_DIRS.values())):
+        raise ValueError(f"Target must be inside wiki categories: {value}")
+    return value
+
+
+def promoted_candidate_meta(meta: dict[str, str], target_rel: str, args: argparse.Namespace) -> dict[str, object]:
+    updated: dict[str, object] = dict(meta)
+    updated["updated"] = today()
+    updated["status"] = "graduated"
+    updated["reviewed_at"] = today()
+    updated["review_decision"] = "approved"
+    updated["reviewed_by"] = args.approved_by
+    updated["review_scope"] = args.scope
+    updated["graduated_to"] = target_rel
+    for key in ("tags", "source_refs"):
+        if key in updated:
+            updated[key] = meta_list(meta, key)
+    return updated
+
+
+def mark_candidate_terminal(candidate: Page, target_rel: str, args: argparse.Namespace, dry_run: bool) -> None:
+    if dry_run:
+        return
+    _, body = split_frontmatter(candidate.text)
+    with RepoLock(timeout=args.lock_timeout), Transaction("mark-candidate") as tx:
+        tx.write_text(candidate.path, render_page(promoted_candidate_meta(candidate.meta, target_rel, args), body))
+        append_log(tx, "promote-idempotent", candidate.title, [
+            f"candidate: {candidate.rel}",
+            f"target: {target_rel}",
+        ])
+
+
+def update_index(target_rel: str, title: str, page_type: str, summary: str) -> str:
+    index_path = ROOT / "index.md"
+    text = index_path.read_text(encoding="utf-8")
+    if f"]({target_rel})" in text:
+        return text
+    section = WIKI_SECTION.get(page_type, "Concepts")
+    line = f"- [{title}]({target_rel}) — {summary}"
+    pattern = re.compile(rf"(## {re.escape(section)}\n)(.*?)(?=\n## |\Z)", re.DOTALL)
+    match = pattern.search(text)
+    if not match:
+        return text.rstrip() + f"\n\n## {section}\n\n{line}\n"
+    body = match.group(2).strip("\n")
+    new_body = f"\n{line}\n" if not body else f"\n{body}\n{line}\n"
+    return text[:match.start(2)] + new_body + text[match.end(2):]
+
+
+def append_log(tx: Transaction, action: str, subject: str, lines: list[str]) -> None:
+    log_path = ROOT / "log.md"
+    existing = log_path.read_text(encoding="utf-8") if log_path.exists() else "# Wiki Log\n"
+    entry = [f"## [{today()}] {action} | {subject}"]
+    entry.extend(f"- {line}" for line in lines)
+    tx.write_text(log_path, existing.rstrip() + "\n\n" + "\n".join(entry) + "\n")
+
+
+def load_body(body: str | None, body_file: str | None, title: str, value_reason: str) -> str:
+    if body_file:
+        path = resolve_repo_path(body_file)
+        return path.read_text(encoding="utf-8")
+    if body:
+        return body if body.startswith("# ") else f"# {title}\n\n{body}\n"
+    return f"# {title}\n\n## 价值\n\n{value_reason}\n"
+
+
+def parse_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
+def find_duplicate_fingerprint(value: str) -> Page | None:
+    for page in iter_markdown():
+        if page.layer == "inbox" and page.meta.get("fingerprint") == value:
+            return page
+    return None
+
+
+def add_common_write_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--lock-timeout", type=float, default=10.0)
+
+
+def add_json_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+
+
+def main(argv: list[str] | None = None) -> int:
+    configure_utf8_stdio()
+    parser = argparse.ArgumentParser(prog="km")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    status = subparsers.add_parser("status", help="Show repository counts")
+    add_json_arg(status)
+    status.set_defaults(func=command_status)
+
+    pending = subparsers.add_parser("pending", help="List active inbox candidates")
+    add_json_arg(pending)
+    pending.set_defaults(func=command_pending)
+
+    search = subparsers.add_parser("search", help="Search wiki, inbox, raw, and docs")
+    search.add_argument("query")
+    search.add_argument("--limit", type=int, default=10)
+    add_json_arg(search)
+    search.set_defaults(func=command_search)
+
+    validate = subparsers.add_parser("validate", help="Validate required frontmatter")
+    add_json_arg(validate)
+    validate.set_defaults(func=command_validate)
+
+    lint = subparsers.add_parser("lint", help="Check internal wiki links and misplaced pages")
+    add_json_arg(lint)
+    lint.set_defaults(func=command_lint)
+
+    propose = subparsers.add_parser("propose", help="Create an inbox candidate")
+    propose.add_argument("--title", required=True)
+    propose.add_argument("--type", default="note", choices=sorted(set(WIKI_DIRS.keys())))
+    propose.add_argument("--tags", default="")
+    propose.add_argument("--agent-id", default="codex")
+    propose.add_argument("--source-tool", default="km-cli")
+    propose.add_argument("--source-session", default="manual")
+    propose.add_argument("--source-ref", action="append")
+    propose.add_argument("--suggested-action", default="create", choices=["create", "merge", "hold", "reject"])
+    propose.add_argument("--suggested-target", default="")
+    propose.add_argument("--value-reason", required=True)
+    propose.add_argument("--confidence", default="medium", choices=["high", "medium", "low"])
+    propose.add_argument("--sensitivity", default="normal", choices=["normal", "sensitive", "secret"])
+    propose.add_argument("--body")
+    propose.add_argument("--body-file")
+    propose.add_argument("--slug")
+    add_json_arg(propose)
+    add_common_write_args(propose)
+    propose.set_defaults(func=command_propose)
+
+    promote = subparsers.add_parser("promote", help="Promote an inbox candidate to wiki")
+    promote.add_argument("candidate")
+    promote.add_argument("--target")
+    promote.add_argument("--title")
+    promote.add_argument("--summary")
+    promote.add_argument("--approved-by", default="user")
+    promote.add_argument("--scope", default="explicit user approval")
+    add_json_arg(promote)
+    add_common_write_args(promote)
+    promote.set_defaults(func=command_promote)
+
+    dashboard = subparsers.add_parser("dashboard", help="Generate an Obsidian-friendly review dashboard")
+    dashboard.add_argument("--output", default="docs/review-dashboard.md")
+    add_json_arg(dashboard)
+    add_common_write_args(dashboard)
+    dashboard.set_defaults(func=command_dashboard)
+
+    qmd_readiness = subparsers.add_parser("qmd-readiness", help="Generate a qmd readiness report")
+    qmd_readiness.add_argument("--output", default="docs/qmd-readiness.md")
+    add_json_arg(qmd_readiness)
+    add_common_write_args(qmd_readiness)
+    qmd_readiness.set_defaults(func=command_qmd_readiness)
+
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+def configure_utf8_stdio() -> None:
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (FileExistsError, FileNotFoundError, RuntimeError, ValueError) as exc:
+        if "--json" in sys.argv:
+            emit_json({"ok": False, "error": str(exc), "error_type": exc.__class__.__name__})
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(2)

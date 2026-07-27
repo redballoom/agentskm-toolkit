@@ -1,0 +1,21 @@
+{
+  "name": "agentskm-toolkit",
+  "version": "0.1.0",
+  "kind": "bundle",
+  "purpose": "Portable packaging layer for the AgentsKM CLI, MCP, HTTP, and review surface.",
+  "source_root": "../plugins/agentskm-toolkit",
+  "components": {
+    "core_cli": "../../tools/km-cli/km.py",
+    "http_adapter": "../../adapters/http/km_http.py",
+    "mcp_adapter": "../../adapters/mcp/km_mcp.py",
+    "review_dashboard": "../../docs/review-dashboard.md",
+    "qmd_readiness": "../../docs/qmd-readiness.md",
+    "runbook": "../../docs/operations-runbook.md"
+  },
+  "principles": [
+    "Keep one source of truth for rules in the core CLI and protocol docs.",
+    "Treat adapters as thin shells only.",
+    "Do not copy Markdown knowledge pages into the bundle.",
+    "Prefer relative references back to the repository root."
+  ]
+}

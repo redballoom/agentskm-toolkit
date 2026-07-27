@@ -1,0 +1,20 @@
+# Runtime / local data
+.km/
+.agents/
+.obsidian/
+000_Inbox/
+raw/
+wiki/
+index.md
+log.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node / build outputs
+node_modules/
+dist/
+build/
+*.log

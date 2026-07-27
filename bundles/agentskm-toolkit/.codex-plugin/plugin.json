@@ -1,0 +1,27 @@
+{
+  "name": "agentskm-toolkit",
+  "version": "0.1.0",
+  "description": "AgentsKM toolkit bundle with CLI-backed MCP tools and review surfaces.",
+  "author": {
+    "name": "Red Balloon"
+  },
+  "keywords": [
+    "agentskm",
+    "knowledge-base",
+    "cli",
+    "mcp",
+    "obsidian"
+  ],
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "AgentsKM Toolkit",
+    "shortDescription": "Local knowledge-base toolkit for multi-agent capture and review.",
+    "longDescription": "A thin Codex plugin wrapper around the AgentsKM CLI, MCP adapter, HTTP adapter, dashboard, and runbook. The plugin keeps all rules in the repository's canonical CLI and protocol docs.",
+    "developerName": "Red Balloon",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ]
+  }
+}
