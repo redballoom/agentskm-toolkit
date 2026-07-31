@@ -180,7 +180,7 @@ def test_setup_profiles() -> None:
     assert saved["profiles"]["codex"]["role"] == "compiler"
     doctor = run_km(["doctor", "--profile", "codex", "--json"])
     assert doctor["ok"] is True
-    assert doctor["toolkit_version"] == "0.4.2"
+    assert doctor["toolkit_version"] == "0.4.3"
     assert doctor["configuration_source"] == "config_file"
 
 
@@ -234,6 +234,60 @@ def test_role_guardrail() -> None:
     ])
     assert proc.returncode != 0
     assert "requires role=compiler" in json.loads(proc.stdout)["error"]
+
+
+def test_contributor_response_flow() -> None:
+    proposed = run_km([
+        "propose",
+        "--title", "Hermes Contributor Response",
+        "--type", "concept",
+        "--tags", "agentskm,hermes,permissions",
+        "--suggested-target", "wiki/concepts/hermes-contributor-response.md",
+        "--value-reason", "验证 contributor 可记录用户交互但不能批准或写 Wiki",
+        "--body", "Hermes 应能记录提醒和用户沉淀意图，后续由 reviewer/compiler 接棒。",
+        "--agent-id", "hermes-agent",
+        "--source-session", "acceptance-respond",
+        "--actor-role", "contributor",
+        "--json",
+    ])
+    candidate = proposed["candidate_path"]
+    text = (TEST_VAULT / candidate).read_text(encoding="utf-8")
+    assert proposed["status"] == "pending"
+    assert "conversation:acceptance-respond" in text
+
+    reminded = run_km([
+        "respond", candidate,
+        "--decision", "remind",
+        "--agent-id", "hermes-agent",
+        "--actor-role", "contributor",
+        "--json",
+    ])
+    assert reminded["status"] == "reminded"
+
+    captured = run_km([
+        "respond", candidate,
+        "--decision", "capture",
+        "--responded-by", "acceptance-user",
+        "--reason", "用户选择沉淀",
+        "--actor-role", "contributor",
+        "--json",
+    ])
+    assert captured["status"] == "reminded"
+    text = (TEST_VAULT / candidate).read_text(encoding="utf-8")
+    assert "user_decision: capture" in text
+    assert "response_actor_role: contributor" in text
+    assert "next_required_role: reviewer-or-compiler" in text
+
+    proc = run_process([
+        sys.executable,
+        str(KM),
+        "respond", candidate,
+        "--decision", "approve",
+        "--actor-role", "contributor",
+        "--config", str(TEST_CONFIG),
+        "--json",
+    ])
+    assert proc.returncode != 0
 
 
 def test_review_and_promote_workflow() -> None:

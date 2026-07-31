@@ -34,7 +34,7 @@ from km_config import (
 )
 
 
-TOOLKIT_VERSION = "0.4.2"
+TOOLKIT_VERSION = "0.4.3"
 TOOLKIT_REPOSITORY = "https://github.com/redballoom/agentskm-toolkit"
 CODEX_MARKETPLACE = "agentskm-local"
 CODEX_PLUGIN = "agentskm-toolkit"
@@ -708,6 +708,14 @@ def command_propose(args: argparse.Namespace) -> int:
     return 0
 
 
+def default_source_refs(source_refs: list[str], source_session: str) -> list[str]:
+    refs = [item for item in source_refs if item]
+    session = (source_session or "").strip()
+    if refs or not session or session in {"manual", "unknown-session"}:
+        return refs
+    return [f"conversation:{session}"]
+
+
 def command_reminders(args: argparse.Namespace) -> int:
     due: list[Page] = []
     today_value = today()
@@ -808,6 +816,88 @@ def command_review(args: argparse.Namespace) -> int:
         })
         return 0
     print(f"Reviewed candidate: {candidate.rel} -> {updated['status']}")
+    return 0
+
+
+def command_respond(args: argparse.Namespace) -> int:
+    role = require_role(args, "contributor", "respond")
+    candidate = load_candidate(args.candidate)
+    if candidate.status in TERMINAL_INBOX:
+        raise ValueError(f"Candidate is already terminal: {candidate.status}")
+
+    decision = args.decision
+    if decision == "snooze":
+        if not args.until:
+            raise ValueError("--until is required for decision=snooze")
+        try:
+            datetime.strptime(args.until, "%Y-%m-%d")
+        except ValueError as exc:
+            raise ValueError("--until must use YYYY-MM-DD") from exc
+    if decision in {"capture", "snooze", "reject"} and not args.responded_by.strip():
+        raise ValueError("--responded-by is required for this decision")
+
+    status_by_decision = {
+        "remind": "reminded",
+        "capture": "reminded",
+        "snooze": "snoozed",
+        "reject": "rejected",
+    }
+    updated: dict[str, object] = dict(candidate.meta)
+    updated["updated"] = today()
+    updated["status"] = status_by_decision[decision]
+    updated["user_decision"] = decision
+    updated["responded_at"] = today()
+    updated["responded_by"] = args.responded_by or args.agent_id
+    updated["response_reason"] = args.reason or ""
+    updated["response_actor_role"] = role
+    if decision == "remind":
+        count = int(candidate.meta.get("reminder_count", "0") or "0") + 1
+        updated["reminded_at"] = today()
+        updated["reminder_count"] = count
+    if decision == "capture":
+        updated["capture_requested_at"] = today()
+        updated["capture_requested_by"] = args.responded_by
+        updated["next_required_role"] = "reviewer-or-compiler"
+    if decision == "snooze":
+        updated["snoozed_until"] = args.until
+    for key in ("tags", "source_refs", "contributor_agents", "source_sessions"):
+        if key in updated:
+            updated[key] = meta_list(candidate.meta, key)
+
+    _, body = split_frontmatter(candidate.text)
+    content = render_page(updated, body)
+    if args.dry_run:
+        if wants_json(args):
+            emit_json({
+                "ok": True,
+                "dry_run": True,
+                "candidate_path": candidate.rel,
+                "status": updated["status"],
+                "user_decision": decision,
+                "content": content,
+            })
+            return 0
+        print(f"DRY RUN respond {candidate.rel} -> {updated['status']}")
+        return 0
+
+    with RepoLock(timeout=args.lock_timeout), Transaction("respond") as tx:
+        tx.write_text(candidate.path, content)
+        append_log(tx, "respond", candidate.title, [
+            f"candidate: {candidate.rel}",
+            f"decision: {decision}",
+            f"status: {updated['status']}",
+            f"responded_by: {updated['responded_by']}",
+            f"actor_role: {role}",
+        ])
+    if wants_json(args):
+        emit_json({
+            "ok": True,
+            "candidate_path": candidate.rel,
+            "status": updated["status"],
+            "user_decision": decision,
+        })
+        return 0
+    print(f"Recorded response: {candidate.rel} -> {updated['status']}")
     return 0
 
 
@@ -1940,6 +2030,17 @@ def main(argv: list[str] | None = None) -> int:
     add_common_write_args(review)
     review.set_defaults(func=command_review)
 
+    respond = subparsers.add_parser("respond", help="Record contributor-visible user response without approving")
+    respond.add_argument("candidate")
+    respond.add_argument("--decision", required=True, choices=["remind", "capture", "snooze", "reject"])
+    respond.add_argument("--responded-by", default="")
+    respond.add_argument("--agent-id", default="agent")
+    respond.add_argument("--reason", default="")
+    respond.add_argument("--until")
+    add_runtime_args(respond)
+    add_json_arg(respond)
+    add_common_write_args(respond)
+    respond.set_defaults(func=command_respond)
     promote = subparsers.add_parser("promote", help="Promote an inbox candidate to wiki")
     promote.add_argument("candidate")
     promote.add_argument("--target")

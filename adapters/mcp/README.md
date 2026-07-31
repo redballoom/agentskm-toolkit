@@ -8,7 +8,7 @@ python adapters/mcp/km_mcp.py --profile codex --host codex --bootstrap-role comp
 ```
 
 The adapter resolves Vault and role from the selected Agent Profile.
-Contributor profiles expose read, reminder, and propose tools.
+Contributor profiles expose read, reminder, propose, and contributor-safe response tools.
 Reviewer profiles additionally expose review and dashboard tools. Compiler
 profiles additionally expose promote and merge tools.
 

@@ -58,13 +58,25 @@ python tools/km-cli/km.py propose `
   --source-ref "conversation:task-id" `
   --suggested-target "wiki/concepts/example.md"
 
+python tools/km-cli/km.py respond 000_Inbox/example.md `
+  --decision capture `
+  --responded-by user
+
 python tools/km-cli/km.py review 000_Inbox/example.md `
   --decision remind
+
+python tools/km-cli/km.py respond 000_Inbox/example.md `
+  --decision capture `
+  --responded-by user
 
 python tools/km-cli/km.py review 000_Inbox/example.md `
   --decision snooze `
   --until 2026-08-03 `
   --reviewed-by user
+
+python tools/km-cli/km.py respond 000_Inbox/example.md `
+  --decision capture `
+  --responded-by user
 
 python tools/km-cli/km.py review 000_Inbox/example.md `
   --decision approve `

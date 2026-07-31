@@ -75,7 +75,7 @@ def handle_message(message: dict[str, Any]) -> None:
             },
             "serverInfo": {
                 "name": "agentskm",
-                "version": "0.4.2",
+                "version": "0.4.3",
             },
         })
         return
@@ -161,6 +161,19 @@ def tools() -> list[dict[str, Any]]:
             "title": "Lint Links",
             "description": "Check internal wikilinks and misplaced formal pages.",
             "inputSchema": object_schema({}),
+        },
+        {
+            "name": "km_respond_candidate",
+            "title": "Record Candidate Response",
+            "description": "Record a contributor-safe user response: reminded, capture intent, snooze, or reject. This never approves or writes Wiki.",
+            "inputSchema": object_schema({
+                "candidate": {"type": "string"},
+                "decision": {"type": "string", "enum": ["remind", "capture", "snooze", "reject"]},
+                "responded_by": {"type": "string"},
+                "reason": {"type": "string"},
+                "until": {"type": "string", "description": "YYYY-MM-DD; required for snooze."},
+                "dry_run": {"type": "boolean", "default": False},
+            }, required=["candidate", "decision"]),
         },
         {
             "name": "km_propose_capture",
@@ -311,6 +324,8 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return cli_result(["search", require_string(args, "query"), "--limit", str(args.get("limit", 10)), "--json"])
     if name == "km_propose_capture":
         return cli_result(build_propose_args(args))
+    if name == "km_respond_candidate":
+        return cli_result(build_respond_args(args))
     if name == "km_review_candidate" and ROLE_ORDER[ROLE] >= ROLE_ORDER["reviewer"]:
         return cli_result(build_review_args(args))
     if name == "km_promote_candidate":
@@ -331,7 +346,7 @@ def cli_result(cli_args: list[str]) -> dict[str, Any]:
     final_args = list(cli_args)
     runtime_commands = {
         "status", "pending", "reminders", "search", "validate", "lint", "propose",
-        "review", "promote", "merge", "dashboard", "qmd-readiness",
+        "respond", "review", "promote", "merge", "dashboard", "qmd-readiness",
     }
     if command in runtime_commands and "--profile" not in final_args:
         final_args.extend(["--profile", PROFILE])
@@ -399,6 +414,24 @@ def build_propose_args(data: dict[str, Any]) -> list[str]:
     append_option(args, data, "body", "--body")
     for source_ref in string_list(data.get("source_refs")):
         args.extend(["--source-ref", source_ref])
+    if bool(data.get("dry_run", False)):
+        args.append("--dry-run")
+    return args
+
+
+def build_respond_args(data: dict[str, Any]) -> list[str]:
+    data = dict(data)
+    data.setdefault("agent_id", str(SETUP_STATUS.get("actor_id", PROFILE)))
+    args = [
+        "respond",
+        require_string(data, "candidate"),
+        "--decision", require_string(data, "decision"),
+        "--json",
+    ]
+    append_option(args, data, "responded_by", "--responded-by")
+    append_option(args, data, "agent_id", "--agent-id")
+    append_option(args, data, "reason", "--reason")
+    append_option(args, data, "until", "--until")
     if bool(data.get("dry_run", False)):
         args.append("--dry-run")
     return args

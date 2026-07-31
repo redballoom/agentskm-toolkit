@@ -65,7 +65,7 @@ Create one concise Inbox candidate with `km_propose_capture`. Include:
 - the actual Agent and source tool identifiers;
 - an honest confidence and sensitivity classification.
 
-After the candidate is created, record `remind` with `km_review_candidate`, then append this compact prompt to the user-facing answer:
+After the candidate is created, record `remind` with `km_respond_candidate` when available. If only `km_review_candidate` is available because the Profile is reviewer or compiler, use `km_review_candidate --decision remind`. Then append this compact prompt to the user-facing answer:
 
 ```text
 发现一条值得沉淀的知识：{title}
@@ -91,6 +91,6 @@ Never promote or merge before status becomes `approved`. Never invent approval. 
 
 ## Permissions
 
-Contributor profiles may search and propose. Reviewer profiles may also record review decisions. Compiler profiles may promote or merge approved candidates. If the required tool is absent, report the current role boundary and leave the candidate in its existing state.
+Contributor profiles may search, propose, and record contributor-safe responses with `km_respond_candidate` (`remind`, `capture`, `snooze`, `reject`). Reviewer profiles may also approve candidates with `km_review_candidate`. Compiler profiles may promote or merge approved candidates. If the required tool is absent, report the current role boundary and leave the candidate in its existing state.
 
 Do not bypass a missing MCP capability by editing Markdown directly.
