@@ -15,8 +15,9 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[2]
-KM = ROOT / "tools" / "km-cli" / "km.py"
+ROOT = Path(__file__).resolve().parent
+KM = ROOT / "km.py"
+KM_MODULE = "agentskm_toolkit.km"
 PROTOCOL_VERSION = "2025-06-18"
 ROLE = "contributor"
 PROFILE = "default"
@@ -360,7 +361,7 @@ def cli_result(cli_args: list[str]) -> dict[str, Any]:
     if CONFIG_PATH and "--config" not in final_args:
         final_args.extend(["--config", CONFIG_PATH])
     proc = subprocess.run(
-        [sys.executable, str(KM), *final_args],
+        [sys.executable, "-m", KM_MODULE, *final_args],
         cwd=ROOT,
         text=True,
         encoding="utf-8",
@@ -542,7 +543,7 @@ def load_setup_status(profile: str) -> dict[str, Any]:
     if CONFIG_PATH:
         args.extend(["--config", CONFIG_PATH])
     proc = subprocess.run(
-        [sys.executable, str(KM), *args],
+        [sys.executable, "-m", KM_MODULE, *args],
         cwd=ROOT,
         text=True,
         encoding="utf-8",
@@ -582,7 +583,7 @@ def bootstrap_profile(profile: str, host: str, role: str) -> None:
     if CONFIG_PATH:
         args.extend(["--config", CONFIG_PATH])
     proc = subprocess.run(
-        [sys.executable, str(KM), *args],
+        [sys.executable, "-m", KM_MODULE, *args],
         cwd=ROOT,
         text=True,
         encoding="utf-8",

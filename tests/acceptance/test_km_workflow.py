@@ -52,6 +52,8 @@ def main() -> int:
         test_setup_bootstrap()
         test_default_vault_creation()
         test_setup_profiles()
+        test_package_entrypoints()
+        test_uvx_distribution_entrypoint()
         test_legacy_setup_migration()
         test_cli_read_paths()
         test_role_guardrail()
@@ -182,6 +184,110 @@ def test_setup_profiles() -> None:
     assert doctor["ok"] is True
     assert doctor["toolkit_version"] == "0.4.3"
     assert doctor["configuration_source"] == "config_file"
+
+
+def test_package_entrypoints() -> None:
+    version = run_process([sys.executable, "-m", "agentskm_toolkit", "--version"])
+    assert version.returncode == 0, version.stderr
+    assert version.stdout.strip() == "0.4.3"
+
+    doctor = run_process([
+        sys.executable,
+        "-m", "agentskm_toolkit",
+        "doctor",
+        "--profile", "codex",
+        "--config", str(TEST_CONFIG),
+        "--json",
+    ])
+    assert doctor.returncode == 0, doctor.stdout or doctor.stderr
+    assert json.loads(doctor.stdout)["toolkit_version"] == "0.4.3"
+
+    input_text = "\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        "",
+    ])
+    mcp = run_process([
+        sys.executable,
+        "-m", "agentskm_toolkit",
+        "mcp",
+        "--profile", "hermes-agent",
+        "--host", "hermes",
+        "--bootstrap-role", "contributor",
+        "--config", str(TEST_CONFIG),
+    ], input_text=input_text)
+    assert mcp.returncode == 0, mcp.stderr
+    responses = [json.loads(line) for line in mcp.stdout.splitlines() if line.strip()]
+    names = {item["name"] for item in responses[1]["result"]["tools"]}
+    assert "km_respond_candidate" in names
+    assert "km_promote_candidate" not in names
+
+
+def test_uvx_distribution_entrypoint() -> None:
+    if not shutil.which("uvx"):
+        raise RuntimeError("uvx is required for productization acceptance")
+
+    version = run_uvx_process(["uvx", "--from", str(ROOT), "agentskm", "--version"])
+    assert version.returncode == 0, version.stdout or version.stderr
+    assert version.stdout.strip().splitlines()[0] == "0.4.3"
+
+    wrong_executable = run_uvx_process(["uvx", "--from", str(ROOT), "agentskm-toolkit", "--version"])
+    assert wrong_executable.returncode != 0
+    assert "An executable named" in wrong_executable.stderr
+
+    uvx_config = TEST_ROOT / "uvx-config.json"
+    input_text = "\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        json.dumps({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "km_propose_capture",
+                "arguments": {
+                    "title": "uvx local acceptance capture",
+                    "value_reason": "Verify uvx package MCP can write Inbox through contributor role",
+                    "body": "This candidate is created by isolated uvx acceptance.",
+                    "source_session": "uvx-acceptance",
+                },
+            },
+        }),
+        json.dumps({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "km_promote_candidate",
+                "arguments": {
+                    "candidate": "kmc-does-not-matter",
+                    "approved_by": "hermes-agent",
+                    "scope": "acceptance",
+                    "dry_run": True,
+                },
+            },
+        }),
+        "",
+    ])
+    mcp = run_uvx_process([
+        "uvx",
+        "--from", str(ROOT),
+        "agentskm",
+        "mcp",
+        "--profile", "hermes-agent",
+        "--host", "hermes",
+        "--bootstrap-role", "contributor",
+        "--config", str(uvx_config),
+    ], input_text=input_text)
+    assert mcp.returncode == 0, mcp.stderr
+    responses = [json.loads(line) for line in mcp.stdout.splitlines() if line.strip()]
+    names = {item["name"] for item in responses[1]["result"]["tools"]}
+    assert "km_propose_capture" in names and "km_promote_candidate" not in names
+    assert responses[2]["result"]["structuredContent"]["created"] is True
+    assert responses[3]["id"] == 4
+    assert responses[3]["result"]["isError"] is True
+    assert "Compiler role is required" in responses[3]["result"]["structuredContent"]["error"]
+    assert (uvx_config.parent / "vault" / "000_Inbox" / "uvx-local-acceptance-capture.md").exists()
 
 
 def test_legacy_setup_migration() -> None:
@@ -502,6 +608,7 @@ def test_second_agent_config() -> None:
         "--agent", "hermes",
         "--profile", "hermes-agent",
         "--config", str(TEST_CONFIG),
+        "--runtime", "source",
         "--output", str(output),
     ])
     assert proc.returncode == 0, proc.stderr
@@ -528,10 +635,13 @@ def test_second_agent_config() -> None:
 
 
 def test_env() -> dict[str, str]:
+    existing = os.environ.get("PYTHONPATH", "")
+    src_path = str(ROOT / "src")
+    pythonpath = src_path if not existing else src_path + os.pathsep + existing
     return {
         "PYTHONUTF8": "1",
+        "PYTHONPATH": pythonpath,
     }
-
 
 def run_km(args: list[str]) -> dict:
     contextual = list(args)
@@ -539,7 +649,7 @@ def run_km(args: list[str]) -> dict:
         contextual.extend(["--config", str(TEST_CONFIG)])
     runtime_commands = {
         "status", "pending", "reminders", "search", "validate", "lint", "propose",
-        "review", "promote", "merge", "dashboard", "qmd-readiness", "doctor",
+        "respond", "review", "promote", "merge", "dashboard", "qmd-readiness", "doctor",
     }
     if contextual[0] in runtime_commands and "--profile" not in contextual:
         contextual.extend(["--profile", "codex"])
@@ -551,6 +661,21 @@ def run_km(args: list[str]) -> dict:
 def run_process(args: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(test_env())
+    return subprocess.run(
+        args,
+        cwd=ROOT,
+        input=input_text,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        capture_output=True,
+    )
+
+
+def run_uvx_process(args: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.pop("PYTHONPATH", None)
     return subprocess.run(
         args,
         cwd=ROOT,

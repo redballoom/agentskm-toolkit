@@ -1645,6 +1645,48 @@ def command_launcher(name: str) -> list[str]:
     raise RuntimeError(f"Required update command was not found on PATH: {name}")
 
 
+def is_packaged_runtime() -> bool:
+    return (TOOL_ROOT / "__init__.py").exists() and (TOOL_ROOT / "cli.py").exists()
+
+
+def emit_update_payload(args: argparse.Namespace, payload: dict[str, object]) -> int:
+    if wants_json(args):
+        emit_json(payload)
+        return 0
+    print(f"AgentsKM update: {payload['mode']}")
+    print("Update completed." if not args.check else "Update check completed.")
+    if payload.get("restart_required"):
+        print("Start a new conversation or reconnect the AgentsKM MCP server to load the new code.")
+    return 0
+
+
+def command_packaged_update(args: argparse.Namespace) -> int:
+    restart_required = not args.check
+    return emit_update_payload(args, {
+        "ok": True,
+        "mode": "packaged_runtime",
+        "repository": TOOLKIT_REPOSITORY,
+        "current_process_version": TOOLKIT_VERSION,
+        "check_only": bool(args.check),
+        "supports_in_process_update": False,
+        "updated": False,
+        "steps": [],
+        "restart_required": restart_required,
+        "recommended_mcp_command": [
+            "uvx",
+            "--from",
+            "agentskm-toolkit",
+            "agentskm",
+            "mcp",
+        ],
+        "next_action": (
+            "reconnect_mcp_to_let_the_host_resolve_the_latest_package"
+            if restart_required else
+            "compare_current_process_version_with_the_package_index_or_git_release"
+        ),
+    })
+
+
 def command_update(args: argparse.Namespace) -> int:
     steps: list[dict[str, object]] = []
     if (TOOL_ROOT / ".git").is_dir():
@@ -1660,6 +1702,8 @@ def command_update(args: argparse.Namespace) -> int:
         mode = "git_checkout"
         restart_required = not args.check
     else:
+        if is_packaged_runtime():
+            return command_packaged_update(args)
         host = args.host or "codex"
         if host != "codex":
             raise RuntimeError(
@@ -1735,14 +1779,7 @@ def command_update(args: argparse.Namespace) -> int:
             "start_new_conversation_or_reconnect_mcp" if restart_required else "none"
         ),
     }
-    if wants_json(args):
-        emit_json(payload)
-        return 0
-    print(f"AgentsKM update: {mode}")
-    print("Update completed." if not args.check else "Update check completed.")
-    if restart_required:
-        print("Start a new conversation or reconnect the AgentsKM MCP server to load the new code.")
-    return 0
+    return emit_update_payload(args, payload)
 
 
 def command_setup_status(args: argparse.Namespace) -> int:

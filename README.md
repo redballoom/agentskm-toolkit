@@ -1,45 +1,69 @@
 # AgentsKM Toolkit
 
 Reusable local toolchain for conversation-driven knowledge capture across
-multiple Agent hosts. Live knowledge data stays in a separate private
-`agentskm-vault` repository.
+multiple Agent hosts. Live knowledge data stays in a user-controlled Vault and
+is never bundled in the toolkit package or Codex plugin.
 
-The publishable source of truth is this standalone `agentskm-toolkit` Git
-repository. Separate Vault workspaces are used only for integration tests and
-experiments; they are not plugin release sources. See
-`docs/toolkit-development-workflow.md`.
+The product boundary is:
+
+```text
+Python package provides CLI/MCP capabilities
+Codex plugin provides host experience and Skill behavior
+%USERPROFILE%\.agentskm\config.json connects Profiles to the user Vault
+Vault stores the user's knowledge assets
+```
 
 ## Components
 
+- `src/agentskm_toolkit`: productized Python package entrypoints
 - `tools/km-cli`: deterministic capture, review, promotion, merge, locking,
-  transactions, and audit log
-- `adapters/mcp`: role-aware stdio MCP server
-- `adapters/http`: optional authenticated localhost adapter
-- `plugins/agentskm-toolkit`: self-contained Codex plugin and capture Skill
-- `integrations`: thin Claude Code and Cursor entry points
+  transactions, and audit log source implementation
+- `adapters/mcp`: role-aware stdio MCP server source implementation
+- `plugins/agentskm-toolkit`: Codex plugin, capture Skill, and MCP template
+- `integrations`: host-specific notes for Claude, Cursor, Hermes, and others
 - `scripts`: plugin packaging and MCP configuration generation
 - `tests`: temporary-Vault end-to-end acceptance coverage
 
-## Local Setup
+## Package Entry
 
-For source development, clone the toolkit. End users install the plugin/package;
-the first MCP start creates a default config, Profile, and empty Vault:
+For local development:
 
 ```powershell
-python tools/km-cli/km.py doctor --profile codex
+pip install -e .
+agentskm --version
+agentskm doctor --profile codex
+agentskm mcp --profile hermes-agent --host hermes
 ```
+
+For install-on-use hosts after publishing:
+
+```powershell
+uvx --from agentskm-toolkit agentskm mcp --profile hermes-agent --host hermes
+```
+
+The first MCP start creates `%USERPROFILE%\.agentskm\config.json`, the selected
+Profile, and the default empty Vault at `%USERPROFILE%\Documents\AgentsKM\vault`
+when no configuration exists. Custom Vault paths remain controlled by the user
+config file.
 
 ## Codex Plugin
 
-The repository is a Codex Git marketplace source through
-`.agents/plugins/marketplace.json`. The installed plugin includes its own CLI,
-MCP adapter, and `agentskm-capture` Skill; it does not depend on paths outside
-the installed plugin cache.
+The repository is also a Codex Git marketplace source through
+`.agents/plugins/marketplace.json`. The plugin supplies the `agentskm-capture`
+Skill and an MCP configuration template. Before the Python package is published,
+the plugin template remains self-contained and starts its bundled MCP source.
+After publishing, productized MCP startup should use:
 
-Install the marketplace from `https://github.com/redballoom/agentskm-toolkit`,
-then install `agentskm-toolkit@agentskm-local`. Later, `km update` refreshes the
-marketplace and reinstalls the plugin package. Start a new conversation or
-reconnect its MCP server to load updated code.
+```json
+{
+  "command": "uvx",
+  "args": ["--from", "agentskm-toolkit", "agentskm", "mcp", "--profile", "codex", "--host", "codex"]
+}
+```
+
+During development, the plugin still carries synchronized CLI/MCP runtime copies
+so existing local plugin installs remain self-contained. Use
+`scripts/build_plugin.py --check` to verify those copies are current.
 
 ## Other Agents
 
@@ -47,11 +71,32 @@ Generate a role-limited MCP configuration:
 
 ```powershell
 python scripts/render_mcp_config.py `
-  --agent claude `
-  --profile claude `
-  --output .mcp.json
+  --agent hermes `
+  --profile hermes-agent `
+  --role contributor `
+  --output hermes.mcp.json
 ```
 
-Use `compiler` only for a trusted Agent that must apply explicit user
-approvals. A contributor can search and propose but cannot approve or write
-formal Wiki pages.
+Use `--runtime source` only for local source-tree testing. Published/user-facing
+configs should use the default `uvx` runtime or `--runtime agentskm` after a
+local package install.
+
+## Roles
+
+The role boundary is invariant across startup modes:
+
+```text
+contributor: search / propose / respond
+reviewer:    + review / dashboard
+compiler:    + promote / merge
+```
+
+A contributor can record user intent with `respond`, but cannot approve, promote,
+merge, or write formal Wiki pages.
+
+## Update Semantics
+
+Source checkout and Git marketplace installs may use `agentskm update` to check
+or refresh local code. In uvx/PyPI-style execution, update should be treated as a
+version check plus reconnect instruction; the running package should not mutate
+itself in place.

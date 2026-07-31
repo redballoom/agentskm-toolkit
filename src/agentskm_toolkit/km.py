@@ -20,25 +20,38 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from km_config import (
-    DEFAULT_VAULT,
-    RuntimeContext,
-    default_config,
-    get_config_path,
-    inspect_setup,
-    is_legacy_config,
-    read_json,
-    resolve_runtime,
-    validate_config,
-    vault_is_valid,
-)
-
+try:
+    from .km_config import (
+        DEFAULT_VAULT,
+        RuntimeContext,
+        default_config,
+        get_config_path,
+        inspect_setup,
+        is_legacy_config,
+        read_json,
+        resolve_runtime,
+        validate_config,
+        vault_is_valid,
+    )
+except ImportError:
+    from km_config import (
+        DEFAULT_VAULT,
+        RuntimeContext,
+        default_config,
+        get_config_path,
+        inspect_setup,
+        is_legacy_config,
+        read_json,
+        resolve_runtime,
+        validate_config,
+        vault_is_valid,
+    )
 
 TOOLKIT_VERSION = "0.4.3"
 TOOLKIT_REPOSITORY = "https://github.com/redballoom/agentskm-toolkit"
 CODEX_MARKETPLACE = "agentskm-local"
 CODEX_PLUGIN = "agentskm-toolkit"
-TOOL_ROOT = Path(__file__).resolve().parents[2]
+TOOL_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = get_config_path()
 ROOT = TOOL_ROOT
 KM_DIR = ROOT / ".km"
