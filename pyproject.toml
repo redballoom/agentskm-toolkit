@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentskm-toolkit"
+version = "0.4.4"
+description = "Local multi-agent knowledge capture toolkit with CLI and MCP server."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Red Balloon" }]
+keywords = ["agentskm", "knowledge-base", "mcp", "cli", "codex", "obsidian"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/redballoom/agentskm-toolkit"
+Repository = "https://github.com/redballoom/agentskm-toolkit"
+Issues = "https://github.com/redballoom/agentskm-toolkit/issues"
+
+[project.scripts]
+agentskm = "agentskm_toolkit.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

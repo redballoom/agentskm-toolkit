@@ -36,6 +36,9 @@ class KMHandler(BaseHTTPRequestHandler):
             if parsed.path == "/health":
                 self.write_json(200, {"ok": True, "service": "agentskm-http"})
                 return
+            if not self.authorized():
+                self.write_json(401, {"ok": False, "error": "Missing or invalid bearer token"})
+                return
             if parsed.path == "/status":
                 self.run_cli(["status", "--json"])
                 return
@@ -92,6 +95,8 @@ class KMHandler(BaseHTTPRequestHandler):
             length = int(length_raw)
         except ValueError as exc:
             raise ValueError("Invalid Content-Length") from exc
+        if length < 0:
+            raise ValueError("Invalid Content-Length")
         if length > MAX_BODY:
             raise ValueError("Request body is too large")
         raw = self.rfile.read(length)
@@ -179,7 +184,6 @@ def build_propose_args(data: dict[str, object]) -> list[str]:
     append_option(args, data, "confidence", "--confidence")
     append_option(args, data, "sensitivity", "--sensitivity")
     append_option(args, data, "body", "--body")
-    append_option(args, data, "body_file", "--body-file")
     append_option(args, data, "slug", "--slug")
     for source_ref in string_list(data.get("source_refs")):
         args.extend(["--source-ref", source_ref])
@@ -266,6 +270,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.token:
         parser.error("--token or AGENTSKM_HTTP_TOKEN is required")
+    if args.host not in {"127.0.0.1", "localhost", "::1"}:
+        parser.error("--host must be a loopback address")
     PROFILE = args.profile
     CONFIG_PATH = str(Path(args.config).expanduser().resolve()) if args.config else ""
     HTTP_TOKEN = args.token

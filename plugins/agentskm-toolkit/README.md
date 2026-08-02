@@ -1,27 +1,36 @@
 # AgentsKM Toolkit Plugin
 
-Self-contained plugin for a local AgentsKM vault.
+Codex plugin for a local AgentsKM Vault.
 
-The package includes the knowledge-capture Skill, KM CLI, and stdio MCP
-adapter. On the first MCP start, it creates the `codex` Profile, user config,
-and a minimal empty Vault automatically when they do not exist:
+The plugin provides:
+
+- the `agentskm-capture` Skill;
+- a self-contained MCP template for local Git marketplace installs;
+- local usage guidance for setup, capture, review, and promotion workflows.
+
+Live knowledge is never bundled in the plugin. Profiles and Vault paths are
+stored in `%USERPROFILE%\.agentskm\config.json`. The default Vault is:
 
 ```text
-config: %USERPROFILE%\.agentskm\config.json
-vault:  %USERPROFILE%\Documents\AgentsKM\vault
-profile: codex (compiler)
+%USERPROFILE%\Documents\AgentsKM\vault
 ```
 
-Profiles and Vault paths are stored in
-`%USERPROFILE%\.agentskm\config.json`. The installed plugin does not require a
-Toolkit source checkout. Change the `main` Vault path in the config to bind all
-Profiles to an existing Vault. Live knowledge is never bundled in the plugin.
+On first MCP start, AgentsKM creates the selected Profile, user config, and a
+minimal empty Vault when they do not exist. For Codex, the default Profile is:
 
-Run `km doctor` to diagnose the active version, Profile, role, config, and
-Vault. Run `km update` to refresh a Git marketplace installation from GitHub.
-Configuration changes are read dynamically. A code update requires an MCP
+```text
+profile: codex
+role: compiler
+```
+
+Development note: this plugin currently still carries synchronized CLI/MCP
+runtime copies so local Git marketplace installs remain self-contained. After
+the Python package is published, the productized path is:
+
+```powershell
+uvx --from agentskm-toolkit agentskm mcp --profile codex --host codex --bootstrap-role compiler
+```
+
+Run `agentskm doctor --profile codex` or `km_doctor` to diagnose the active
+version, Profile, role, config, and Vault. A code update requires an MCP
 reconnect or a new conversation; the active process is never killed in place.
-
-The plugin, MCP adapter, and HTTP adapter are thin wrappers. The KM CLI remains
-the only place that performs writes, locking, validation, promotion, and audit
-logging.

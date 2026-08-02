@@ -68,7 +68,7 @@ suggested_action: create | merge | hold | reject
 suggested_target: wiki/queries/example.md
 value_reason: 这条知识为什么值得沉淀
 confidence: high | medium | low
-sensitivity: normal | sensitive | secret
+sensitivity: normal | sensitive
 fingerprint: sha256-of-normalized-topic-and-claims
 ---
 ```
@@ -77,7 +77,7 @@ fingerprint: sha256-of-normalized-topic-and-claims
 
 - 旧字段 `sources` 可以暂时保留，但新写入必须使用 `source_refs`。
 - 如果 `source_refs` 为空，候选不能直接毕业，只能进入 `pending-source-review`。
-- `sensitivity: secret` 的候选不得写入 Wiki，只能提示用户处理。
+- 检测到密钥、凭证或其他 `secret` 内容时不得创建候选，只能提示用户先完成脱敏。
 
 ## 5. 状态机
 
@@ -150,7 +150,7 @@ KM CLI 完成后：
 - 所有写入通过 `km propose`、`km review`、`km promote`、`km merge` 和 `km dashboard` 执行。
 - Agent 或适配层需要机器输出时，应调用 `--json`。
 - MCP 启动时固定为 `contributor`、`reviewer` 或 `compiler`，并按角色隐藏工具。
-- CLI 对写命令再次检查 `--actor-role`，避免只依赖工具可见性。
+- CLI 对写命令按选中 Profile 的角色再次检查，不接受命令行角色覆盖。
 - CLI 负责文件锁、事务、幂等和审计。
 - MCP、HTTP、Obsidian CLI 都只能作为薄适配层调用 KM CLI。
 - HTTP 适配器只允许本机监听，默认 `127.0.0.1`，不得作为公网服务暴露。

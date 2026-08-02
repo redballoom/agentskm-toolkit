@@ -25,7 +25,7 @@ HTTP_ADAPTER = ROOT / "adapters" / "http" / "km_http.py"
 MCP_ADAPTER = ROOT / "adapters" / "mcp" / "km_mcp.py"
 MCP_CONFIG_RENDERER = ROOT / "scripts" / "render_mcp_config.py"
 PLUGIN = ROOT / "plugins" / "agentskm-toolkit"
-SOURCE_VAULT = Path(os.environ.get("AGENTSKM_DATA_ROOT", ROOT)).resolve()
+EXPECTED_VERSION = "0.4.4"
 TEST_ROOT: Path
 TEST_VAULT: Path
 TEST_CONFIG: Path
@@ -33,15 +33,20 @@ TEST_CONFIG: Path
 
 def main() -> int:
     global TEST_ROOT, TEST_VAULT, TEST_CONFIG
-    if not (SOURCE_VAULT / "000_Inbox").is_dir():
-        raise RuntimeError("Set AGENTSKM_DATA_ROOT to an AgentsKM vault before running acceptance tests")
-
     with tempfile.TemporaryDirectory(prefix="agentskm-acceptance-") as temp:
         TEST_ROOT = Path(temp)
         TEST_VAULT = TEST_ROOT / "vault"
         TEST_CONFIG = TEST_ROOT / "config.json"
+        source_override = os.environ.get("AGENTSKM_DATA_ROOT")
+        if source_override:
+            source_vault = Path(source_override).resolve()
+            if not (source_vault / "000_Inbox").is_dir():
+                raise RuntimeError("AGENTSKM_DATA_ROOT is not an AgentsKM vault")
+        else:
+            source_vault = TEST_ROOT / "source-vault"
+            create_fixture_vault(source_vault)
         shutil.copytree(
-            SOURCE_VAULT,
+            source_vault,
             TEST_VAULT,
             ignore=shutil.ignore_patterns(
                 ".git", ".km", ".tmp", ".agents", ".codex", ".obsidian", "__pycache__"
@@ -52,9 +57,14 @@ def main() -> int:
         test_setup_bootstrap()
         test_default_vault_creation()
         test_setup_profiles()
+        test_package_entrypoints()
+        test_uvx_distribution_entrypoint()
         test_legacy_setup_migration()
         test_cli_read_paths()
         test_role_guardrail()
+        test_security_guardrails()
+        test_frontmatter_escaping()
+        test_contributor_response_flow()
         test_review_and_promote_workflow()
         test_merge_workflow()
         test_duplicate_contributors()
@@ -66,6 +76,58 @@ def main() -> int:
 
     print("Acceptance workflow passed.")
     return 0
+
+
+def create_fixture_vault(path: Path) -> None:
+    for relative in ("000_Inbox", "wiki/entities", "wiki/concepts", "wiki/comparisons", "wiki/queries", "raw", "docs"):
+        (path / relative).mkdir(parents=True, exist_ok=True)
+    (path / "index.md").write_text(
+        "# AgentsKM\n\n## Entities\n\n## Concepts\n\n## Comparisons\n\n## Queries\n",
+        encoding="utf-8",
+    )
+    write_fixture_page(
+        path / "wiki/queries/lingxing-api-auth.md",
+        "领星 API 鉴权",
+        "query",
+        "领星 API 鉴权需要 access token，并在过期后刷新。",
+    )
+    write_fixture_page(
+        path / "wiki/queries/wsl-windows-chrome-cdp.md",
+        "WSL 连接 Windows Chrome CDP",
+        "query",
+        "WSL 如何连接 Windows Chrome CDP：使用 Windows 主机地址和远程调试端口。",
+    )
+    write_fixture_page(
+        path / "wiki/queries/docsify-api-extraction.md",
+        "Docsify API 提取方法论",
+        "query",
+        "Docsify API 提取方法论包括定位 Markdown 源文件和验证请求参数。",
+    )
+    write_fixture_page(
+        path / "000_Inbox/source-review-needed.md",
+        "待补来源候选",
+        "note",
+        "尚未补充来源。",
+        inbox=True,
+    )
+
+
+def write_fixture_page(path: Path, title: str, page_type: str, body: str, *, inbox: bool = False) -> None:
+    meta: dict[str, object] = {
+        "title": title,
+        "created": "2026-01-01",
+        "updated": "2026-01-01",
+        "type": page_type,
+        "tags": ["acceptance"],
+    }
+    if inbox:
+        meta.update({"status": "pending-source-review", "confidence": "medium"})
+    else:
+        meta.update({"status": "active", "source_refs": ["fixture:acceptance"]})
+    frontmatter = "\n".join(
+        f"{key}: {json.dumps(value, ensure_ascii=False)}" for key, value in meta.items()
+    )
+    path.write_text(f"---\n{frontmatter}\n---\n\n# {title}\n\n{body}\n", encoding="utf-8")
 
 
 def test_cli_read_paths() -> None:
@@ -180,8 +242,113 @@ def test_setup_profiles() -> None:
     assert saved["profiles"]["codex"]["role"] == "compiler"
     doctor = run_km(["doctor", "--profile", "codex", "--json"])
     assert doctor["ok"] is True
-    assert doctor["toolkit_version"] == "0.4.3"
+    assert doctor["toolkit_version"] == EXPECTED_VERSION
     assert doctor["configuration_source"] == "config_file"
+
+
+def test_package_entrypoints() -> None:
+    version = run_process([sys.executable, "-m", "agentskm_toolkit", "--version"])
+    assert version.returncode == 0, version.stderr
+    assert version.stdout.strip() == EXPECTED_VERSION
+
+    doctor = run_process([
+        sys.executable,
+        "-m", "agentskm_toolkit",
+        "doctor",
+        "--profile", "codex",
+        "--config", str(TEST_CONFIG),
+        "--json",
+    ])
+    assert doctor.returncode == 0, doctor.stdout or doctor.stderr
+    assert json.loads(doctor.stdout)["toolkit_version"] == EXPECTED_VERSION
+
+    input_text = "\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        "",
+    ])
+    mcp = run_process([
+        sys.executable,
+        "-m", "agentskm_toolkit",
+        "mcp",
+        "--profile", "hermes-agent",
+        "--host", "hermes",
+        "--bootstrap-role", "contributor",
+        "--config", str(TEST_CONFIG),
+    ], input_text=input_text)
+    assert mcp.returncode == 0, mcp.stderr
+    responses = [json.loads(line) for line in mcp.stdout.splitlines() if line.strip()]
+    assert responses[0]["result"]["serverInfo"]["version"] == EXPECTED_VERSION
+    names = {item["name"] for item in responses[1]["result"]["tools"]}
+    assert "km_respond_candidate" in names
+    assert "km_promote_candidate" not in names
+
+
+def test_uvx_distribution_entrypoint() -> None:
+    if not shutil.which("uvx"):
+        raise RuntimeError("uvx is required for productization acceptance")
+
+    version = run_uvx_process(["uvx", "--from", str(ROOT), "agentskm", "--version"])
+    assert version.returncode == 0, version.stdout or version.stderr
+    assert version.stdout.strip().splitlines()[0] == EXPECTED_VERSION
+
+    wrong_executable = run_uvx_process(["uvx", "--from", str(ROOT), "agentskm-toolkit", "--version"])
+    assert wrong_executable.returncode != 0
+    assert "An executable named" in wrong_executable.stderr
+
+    uvx_config = TEST_ROOT / "uvx-config.json"
+    input_text = "\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        json.dumps({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "km_propose_capture",
+                "arguments": {
+                    "title": "uvx local acceptance capture",
+                    "value_reason": "Verify uvx package MCP can write Inbox through contributor role",
+                    "body": "This candidate is created by isolated uvx acceptance.",
+                    "source_session": "uvx-acceptance",
+                },
+            },
+        }),
+        json.dumps({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "km_promote_candidate",
+                "arguments": {
+                    "candidate": "kmc-does-not-matter",
+                    "approved_by": "hermes-agent",
+                    "scope": "acceptance",
+                    "dry_run": True,
+                },
+            },
+        }),
+        "",
+    ])
+    mcp = run_uvx_process([
+        "uvx",
+        "--from", str(ROOT),
+        "agentskm",
+        "mcp",
+        "--profile", "hermes-agent",
+        "--host", "hermes",
+        "--bootstrap-role", "contributor",
+        "--config", str(uvx_config),
+    ], input_text=input_text)
+    assert mcp.returncode == 0, mcp.stderr
+    responses = [json.loads(line) for line in mcp.stdout.splitlines() if line.strip()]
+    names = {item["name"] for item in responses[1]["result"]["tools"]}
+    assert "km_propose_capture" in names and "km_promote_candidate" not in names
+    assert responses[2]["result"]["structuredContent"]["created"] is True
+    assert responses[3]["id"] == 4
+    assert responses[3]["result"]["isError"] is True
+    assert "Compiler role is required" in responses[3]["result"]["structuredContent"]["error"]
+    assert (uvx_config.parent / "vault" / "000_Inbox" / "uvx-local-acceptance-capture.md").exists()
 
 
 def test_legacy_setup_migration() -> None:
@@ -226,14 +393,108 @@ def test_role_guardrail() -> None:
         "--target", "wiki/comparisons/blocked.md",
         "--approved-by", "user",
         "--scope", "acceptance",
-        "--actor-role", "contributor",
-        "--profile", "codex",
+        "--profile", "hermes-agent",
         "--config", str(TEST_CONFIG),
         "--dry-run",
         "--json",
     ])
     assert proc.returncode != 0
     assert "requires role=compiler" in json.loads(proc.stdout)["error"]
+
+
+def test_security_guardrails() -> None:
+    override = run_process([
+        sys.executable, str(KM), "dashboard",
+        "--profile", "hermes-agent",
+        "--config", str(TEST_CONFIG),
+        "--actor-role", "reviewer",
+        "--dry-run",
+        "--json",
+    ])
+    assert override.returncode != 0
+    assert "unrecognized arguments: --actor-role" in override.stderr
+
+    contributor_report = run_process([
+        sys.executable, str(KM), "qmd-readiness",
+        "--profile", "hermes-agent",
+        "--config", str(TEST_CONFIG),
+        "--output", "docs/contributor.md",
+        "--dry-run",
+        "--json",
+    ])
+    assert contributor_report.returncode != 0
+    assert "requires role=reviewer" in json.loads(contributor_report.stdout)["error"]
+
+    escaped_report = run_process([
+        sys.executable, str(KM), "dashboard",
+        "--profile", "km-reviewer",
+        "--config", str(TEST_CONFIG),
+        "--output", "wiki/concepts/unauthorized.md",
+        "--dry-run",
+        "--json",
+    ])
+    assert escaped_report.returncode != 0
+    assert "inside docs/" in json.loads(escaped_report.stdout)["error"]
+
+    proposed = run_km([
+        "propose", "--profile", "hermes-agent",
+        "--title", "Traversal Guardrail",
+        "--value-reason", "验证 Wiki 路径边界",
+        "--source-ref", "conversation:path-guard",
+        "--json",
+    ])
+    candidate = proposed["candidate_path"]
+    run_km([
+        "review", candidate,
+        "--profile", "km-reviewer",
+        "--decision", "approve",
+        "--reviewed-by", "acceptance-user",
+        "--json",
+    ])
+    traversal = run_process([
+        sys.executable, str(KM), "promote", candidate,
+        "--profile", "codex",
+        "--config", str(TEST_CONFIG),
+        "--target", "wiki/concepts/../../docs/escaped.md",
+        "--approved-by", "acceptance-user",
+        "--scope", "path audit",
+        "--dry-run",
+        "--json",
+    ])
+    assert traversal.returncode != 0
+    assert "inside wiki categories" in json.loads(traversal.stdout)["error"]
+
+    secret = run_process([
+        sys.executable, str(KM), "propose",
+        "--profile", "hermes-agent",
+        "--config", str(TEST_CONFIG),
+        "--title", "Secret must not persist",
+        "--value-reason", "security",
+        "--sensitivity", "secret",
+        "--json",
+    ])
+    assert secret.returncode != 0
+
+
+def test_frontmatter_escaping() -> None:
+    title = "Frontmatter 安全\ninjected: false"
+    source_ref = "conversation:frontmatter,segment"
+    proposed = run_km([
+        "propose", "--profile", "hermes-agent",
+        "--title", title,
+        "--value-reason", "验证换行和逗号不会破坏元数据",
+        "--source-ref", source_ref,
+        "--json",
+    ])
+    path = TEST_VAULT / proposed["candidate_path"]
+    text = path.read_text(encoding="utf-8")
+    assert "\\ninjected: false" in text
+    candidate = next(
+        item for item in run_km(["pending", "--profile", "hermes-agent", "--json"])["candidates"]
+        if item["path"] == proposed["candidate_path"]
+    )
+    assert candidate["title"] == title
+    assert candidate["source_refs"] == [source_ref]
 
 
 def test_contributor_response_flow() -> None:
@@ -247,7 +508,7 @@ def test_contributor_response_flow() -> None:
         "--body", "Hermes 应能记录提醒和用户沉淀意图，后续由 reviewer/compiler 接棒。",
         "--agent-id", "hermes-agent",
         "--source-session", "acceptance-respond",
-        "--actor-role", "contributor",
+        "--profile", "hermes-agent",
         "--json",
     ])
     candidate = proposed["candidate_path"]
@@ -259,7 +520,7 @@ def test_contributor_response_flow() -> None:
         "respond", candidate,
         "--decision", "remind",
         "--agent-id", "hermes-agent",
-        "--actor-role", "contributor",
+        "--profile", "hermes-agent",
         "--json",
     ])
     assert reminded["status"] == "reminded"
@@ -269,21 +530,21 @@ def test_contributor_response_flow() -> None:
         "--decision", "capture",
         "--responded-by", "acceptance-user",
         "--reason", "用户选择沉淀",
-        "--actor-role", "contributor",
+        "--profile", "hermes-agent",
         "--json",
     ])
     assert captured["status"] == "reminded"
     text = (TEST_VAULT / candidate).read_text(encoding="utf-8")
-    assert "user_decision: capture" in text
-    assert "response_actor_role: contributor" in text
-    assert "next_required_role: reviewer-or-compiler" in text
+    assert 'user_decision: "capture"' in text
+    assert 'response_actor_role: "contributor"' in text
+    assert 'next_required_role: "reviewer-or-compiler"' in text
 
     proc = run_process([
         sys.executable,
         str(KM),
         "respond", candidate,
         "--decision", "approve",
-        "--actor-role", "contributor",
+        "--profile", "hermes-agent",
         "--config", str(TEST_CONFIG),
         "--json",
     ])
@@ -302,7 +563,7 @@ def test_review_and_promote_workflow() -> None:
         "--body", "经过验证的候选应先审核，再进入正式 Wiki。",
         "--agent-id", "codex-acceptance",
         "--source-session", "acceptance-promote",
-        "--actor-role", "contributor",
+        "--profile", "hermes-agent",
         "--json",
     ])
     candidate = proposed["candidate_path"]
@@ -312,7 +573,7 @@ def test_review_and_promote_workflow() -> None:
         "review", candidate,
         "--decision", "remind",
         "--agent-id", "codex-acceptance",
-        "--actor-role", "reviewer",
+        "--profile", "km-reviewer",
         "--json",
     ])
     assert reminded["status"] == "reminded"
@@ -323,7 +584,7 @@ def test_review_and_promote_workflow() -> None:
         "--decision", "snooze",
         "--until", date.today().isoformat(),
         "--reviewed-by", "acceptance-user",
-        "--actor-role", "reviewer",
+        "--profile", "km-reviewer",
         "--json",
     ])
     assert snoozed["status"] == "snoozed"
@@ -334,7 +595,7 @@ def test_review_and_promote_workflow() -> None:
         "--decision", "approve",
         "--reviewed-by", "acceptance-user",
         "--reason", "用户选择沉淀",
-        "--actor-role", "reviewer",
+        "--profile", "km-reviewer",
         "--json",
     ])
     assert approved["status"] == "approved"
@@ -344,13 +605,13 @@ def test_review_and_promote_workflow() -> None:
         "--target", "wiki/concepts/acceptance-capture-workflow.md",
         "--approved-by", "acceptance-user",
         "--scope", "用户批准验收候选毕业",
-        "--actor-role", "compiler",
+        "--profile", "codex",
         "--json",
     ])
     assert promoted["promoted"] is True
     assert (TEST_VAULT / promoted["target"]).exists()
     assert "acceptance-capture-workflow.md" in (TEST_VAULT / "index.md").read_text(encoding="utf-8")
-    assert "status: graduated" in (TEST_VAULT / candidate).read_text(encoding="utf-8")
+    assert 'status: "graduated"' in (TEST_VAULT / candidate).read_text(encoding="utf-8")
 
 
 def test_merge_workflow() -> None:
@@ -364,7 +625,7 @@ def test_merge_workflow() -> None:
         "--suggested-target", "wiki/queries/lingxing-api-auth.md",
         "--value-reason", "补充正式页的验收边界",
         "--body", "验收补充：调用方应在刷新令牌后重放一次失败请求。",
-        "--actor-role", "contributor",
+        "--profile", "hermes-agent",
         "--json",
     ])
     candidate = proposed["candidate_path"]
@@ -372,7 +633,7 @@ def test_merge_workflow() -> None:
         "review", candidate,
         "--decision", "approve",
         "--reviewed-by", "acceptance-user",
-        "--actor-role", "reviewer",
+        "--profile", "km-reviewer",
         "--json",
     ])
     merged = run_km([
@@ -380,13 +641,13 @@ def test_merge_workflow() -> None:
         "--target", "wiki/queries/lingxing-api-auth.md",
         "--approved-by", "acceptance-user",
         "--scope", "用户批准合并验收边界",
-        "--actor-role", "compiler",
+        "--profile", "codex",
         "--json",
     ])
     assert merged["merged"] is True
     target_body = (TEST_VAULT / merged["target"]).read_text(encoding="utf-8")
     assert "调用方应在刷新令牌后重放一次失败请求" in target_body
-    assert "status: merged" in (TEST_VAULT / candidate).read_text(encoding="utf-8")
+    assert 'status: "merged"' in (TEST_VAULT / candidate).read_text(encoding="utf-8")
 
 
 def test_duplicate_contributors() -> None:
@@ -398,7 +659,7 @@ def test_duplicate_contributors() -> None:
         "--suggested-target", "wiki/concepts/multi-agent-duplicate.md",
         "--value-reason", "验证多 Agent 去重并保留来源",
         "--body", "相同主题应合并贡献者和来源。",
-        "--actor-role", "contributor",
+        "--profile", "hermes-agent",
         "--json",
     ]
     first = run_km([*common, "--source-ref", "conversation:agent-a", "--agent-id", "agent-a", "--source-session", "agent-a-session"])
@@ -410,9 +671,9 @@ def test_duplicate_contributors() -> None:
 
 
 def test_dashboard_and_qmd() -> None:
-    dashboard = run_km(["dashboard", "--actor-role", "reviewer", "--json"])
+    dashboard = run_km(["dashboard", "--profile", "km-reviewer", "--json"])
     assert (TEST_VAULT / dashboard["output"]).exists()
-    qmd = run_km(["qmd-readiness", "--json"])
+    qmd = run_km(["qmd-readiness", "--profile", "km-reviewer", "--json"])
     assert qmd["ready"] is False
     assert qmd["top5_hit_rate"] >= 0.9
 
@@ -427,8 +688,13 @@ def test_http_adapter() -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        assert http_get(port, "/health")["ok"] is True
-        assert http_get(port, "/search?" + urllib.parse.urlencode({"q": "领星 API 鉴权", "limit": "1"}))["matches"]
+        health_status, health = http_get(port, "/health")
+        assert health_status == 200 and health["ok"] is True
+        search_route = "/search?" + urllib.parse.urlencode({"q": "领星 API 鉴权", "limit": "1"})
+        unauthorized_read, _ = http_get(port, search_route)
+        assert unauthorized_read == 401
+        search_status, search = http_get(port, search_route, token="acceptance-token")
+        assert search_status == 200 and search["matches"]
         unauthorized_status, _ = http_post(port, "/propose", {"title": "blocked", "value_reason": "blocked"})
         assert unauthorized_status == 401
         authorized_status, payload = http_post(
@@ -480,6 +746,8 @@ def test_self_contained_plugin() -> None:
     assert plugin_cli.exists() and plugin_mcp.exists()
     skill_path = PLUGIN / "skills" / "agentskm-capture" / "SKILL.md"
     assert skill_path.exists()
+    manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert manifest["version"] == EXPECTED_VERSION
     skill_text = skill_path.read_text(encoding="utf-8")
     assert "km_setup_status" in skill_text
     assert "The CLI is the only Setup writer" in skill_text
@@ -502,6 +770,7 @@ def test_second_agent_config() -> None:
         "--agent", "hermes",
         "--profile", "hermes-agent",
         "--config", str(TEST_CONFIG),
+        "--runtime", "source",
         "--output", str(output),
     ])
     assert proc.returncode == 0, proc.stderr
@@ -528,10 +797,13 @@ def test_second_agent_config() -> None:
 
 
 def test_env() -> dict[str, str]:
+    existing = os.environ.get("PYTHONPATH", "")
+    src_path = str(ROOT / "src")
+    pythonpath = src_path if not existing else src_path + os.pathsep + existing
     return {
         "PYTHONUTF8": "1",
+        "PYTHONPATH": pythonpath,
     }
-
 
 def run_km(args: list[str]) -> dict:
     contextual = list(args)
@@ -539,7 +811,7 @@ def run_km(args: list[str]) -> dict:
         contextual.extend(["--config", str(TEST_CONFIG)])
     runtime_commands = {
         "status", "pending", "reminders", "search", "validate", "lint", "propose",
-        "review", "promote", "merge", "dashboard", "qmd-readiness", "doctor",
+        "respond", "review", "promote", "merge", "dashboard", "qmd-readiness", "doctor",
     }
     if contextual[0] in runtime_commands and "--profile" not in contextual:
         contextual.extend(["--profile", "codex"])
@@ -551,6 +823,21 @@ def run_km(args: list[str]) -> dict:
 def run_process(args: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.update(test_env())
+    return subprocess.run(
+        args,
+        cwd=ROOT,
+        input=input_text,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        capture_output=True,
+    )
+
+
+def run_uvx_process(args: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env.pop("PYTHONPATH", None)
     return subprocess.run(
         args,
         cwd=ROOT,
@@ -591,9 +878,14 @@ def import_module(path: Path, name: str):
     return module
 
 
-def http_get(port: int, route: str) -> dict:
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}{route}", timeout=10) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def http_get(port: int, route: str, token: str = "") -> tuple[int, dict]:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{route}", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
 
 
 def http_post(port: int, route: str, payload: dict, token: str = "") -> tuple[int, dict]:

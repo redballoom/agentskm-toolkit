@@ -1,6 +1,6 @@
 {
   "name": "agentskm-toolkit",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Multi-agent local knowledge capture, review, and promotion workflow.",
   "author": {
     "name": "Red Balloon"
