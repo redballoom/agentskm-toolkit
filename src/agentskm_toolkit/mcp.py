@@ -76,7 +76,7 @@ def handle_message(message: dict[str, Any]) -> None:
             },
             "serverInfo": {
                 "name": "agentskm",
-                "version": "0.4.3",
+                "version": "0.4.4",
             },
         })
         return
@@ -199,7 +199,7 @@ def tools() -> list[dict[str, Any]]:
                 "source_tool": {"type": "string", "default": "mcp"},
                 "source_session": {"type": "string", "default": "mcp-session"},
                 "confidence": {"type": "string", "enum": ["high", "medium", "low"], "default": "medium"},
-                "sensitivity": {"type": "string", "enum": ["normal", "sensitive", "secret"], "default": "normal"},
+                "sensitivity": {"type": "string", "enum": ["normal", "sensitive"], "default": "normal"},
                 "dry_run": {"type": "boolean", "default": False},
             }, required=["title", "value_reason"]),
         },

@@ -11,12 +11,12 @@ data. Never publish user Vault files or local config.
   - Project name: `agentskm-toolkit`
   - Owner/repository: `redballoom/agentskm-toolkit`
   - Workflow: `publish.yml`
-  - Environment: `pypi` or any environment
+  - Environment: `pypi`
 - TestPyPI pending publisher:
   - Project name: `agentskm-toolkit`
   - Owner/repository: `redballoom/agentskm-toolkit`
   - Workflow: `publish.yml`
-  - Environment: `testpypi` or any environment
+  - Environment: `testpypi`
 
 ## Before TestPyPI
 
@@ -25,10 +25,9 @@ data. Never publish user Vault files or local config.
 - Run local acceptance:
 
 ```powershell
-$env:AGENTSKM_DATA_ROOT='D:\AgentsKM'
 python tests\acceptance\test_km_workflow.py
 uv build
-uvx --from .\dist\agentskm_toolkit-0.4.3-py3-none-any.whl agentskm --version
+uvx --from (Get-ChildItem .\dist\agentskm_toolkit-*.whl | Select-Object -First 1).FullName agentskm --version
 ```
 
 - Push the release branch to GitHub.

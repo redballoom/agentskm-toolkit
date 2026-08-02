@@ -341,7 +341,7 @@ km profile set-default <name>
 
 ```json
 {
-  "config_path": "C:\\Users\\redballoon\\.agentskm\\config.json",
+  "config_path": "C:\\Users\\<username>\\.agentskm\\config.json",
   "profile": "codex",
   "actor_id": "codex",
   "role": "compiler",
@@ -529,7 +529,7 @@ flowchart TD
 任务：
 
 - [ ] 所有 CLI 命令改用单一 `RuntimeContext`。
-- [ ] 删除内部对 `AGENTSKM_ROLE` 和自由 `--actor-role` 的依赖。
+- [x] 删除内部对 `AGENTSKM_ROLE` 和自由 `--actor-role` 的依赖。
 - [ ] 所有审计写入 Profile 名和 `actor_id`。
 - [ ] 实现 Contributor/Reviewer/Compiler 固定能力矩阵。
 - [ ] 增加 `km respond`，拆分用户意向与质量审核。

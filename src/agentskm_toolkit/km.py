@@ -47,7 +47,7 @@ except ImportError:
         vault_is_valid,
     )
 
-TOOLKIT_VERSION = "0.4.3"
+TOOLKIT_VERSION = "0.4.4"
 TOOLKIT_REPOSITORY = "https://github.com/redballoom/agentskm-toolkit"
 CODEX_MARKETPLACE = "agentskm-local"
 CODEX_PLUGIN = "agentskm-toolkit"
@@ -180,10 +180,7 @@ def ensure_vault_root() -> None:
 
 
 def actor_role(args: argparse.Namespace) -> str:
-    explicit = getattr(args, "actor_role", None)
-    if explicit:
-        print("WARNING: --actor-role is deprecated; select an AgentsKM Profile instead.", file=sys.stderr)
-    role = explicit or (RUNTIME.role if RUNTIME else None) or "contributor"
+    role = (RUNTIME.role if RUNTIME else None) or "contributor"
     if role not in ROLE_ORDER:
         raise ValueError(f"Unknown actor role: {role}")
     return role
@@ -407,12 +404,28 @@ def parse_frontmatter(text: str) -> dict[str, str]:
         if re.match(r"^[A-Za-z_][A-Za-z0-9_-]*:", line):
             key, value = line.split(":", 1)
             current_key = key.strip()
-            meta[current_key] = value.strip()
+            meta[current_key] = parse_meta_scalar(value.strip())
         elif current_key and line.lstrip().startswith("- "):
             prior = meta.get(current_key, "")
-            item = line.strip()[2:].strip()
+            item = parse_meta_scalar(line.strip()[2:].strip())
             meta[current_key] = f"{prior}, {item}".strip(", ")
     return meta
+
+
+def parse_meta_scalar(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        decoded = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
+    if isinstance(decoded, (dict, list)):
+        return value
+    if decoded is None:
+        return ""
+    if isinstance(decoded, bool):
+        return "true" if decoded else "false"
+    return str(decoded)
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
@@ -428,11 +441,10 @@ def render_page(meta: dict[str, object], body: str) -> str:
     lines = ["---"]
     for key, value in meta.items():
         if isinstance(value, list):
-            lines.append(f"{key}:")
-            for item in value:
-                lines.append(f"  - {item}")
+            serialized = json.dumps([str(item) for item in value], ensure_ascii=False)
+            lines.append(f"{key}: {serialized}")
         else:
-            lines.append(f"{key}: {value}")
+            lines.append(f"{key}: {json.dumps(value, ensure_ascii=False)}")
     lines.append("---")
     return "\n".join(lines) + "\n\n" + body.lstrip()
 
@@ -442,7 +454,13 @@ def meta_list(meta: dict[str, str], key: str) -> list[str]:
     if not value:
         return []
     if value.startswith("[") and value.endswith("]"):
-        value = value[1:-1]
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            value = value[1:-1]
+        else:
+            if isinstance(decoded, list):
+                return [str(item) for item in decoded if str(item).strip()]
     return [item.strip().strip("'\"") for item in value.split(",") if item.strip()]
 
 
@@ -631,7 +649,9 @@ def normalize_target(target: str) -> str:
 
 def command_propose(args: argparse.Namespace) -> int:
     role = require_role(args, "contributor", "propose")
-    source_refs = args.source_ref or []
+    if args.sensitivity == "secret":
+        raise ValueError("Refusing to persist a candidate with sensitivity=secret")
+    source_refs = default_source_refs(args.source_ref or [], args.source_session)
     tags = unique(["implicit-capture", *parse_csv(args.tags)])
     body = load_body(args.body, args.body_file, args.title, args.value_reason)
     candidate_id = next_candidate_id()
@@ -1114,7 +1134,7 @@ def command_dashboard(args: argparse.Namespace) -> int:
     require_role(args, "reviewer", "dashboard")
     pages = iter_markdown()
     output_rel = args.output.replace("\\", "/")
-    output_path = resolve_repo_path(output_rel)
+    output_path = resolve_docs_output(output_rel)
     text = render_dashboard(pages)
     if args.dry_run:
         if wants_json(args):
@@ -1137,6 +1157,7 @@ def command_dashboard(args: argparse.Namespace) -> int:
 
 
 def command_qmd_readiness(args: argparse.Namespace) -> int:
+    require_role(args, "reviewer", "qmd-readiness")
     pages = iter_markdown()
     wiki = [page for page in pages if page.layer == "wiki"]
     raw = [page for page in pages if page.layer == "raw"]
@@ -1168,7 +1189,7 @@ def command_qmd_readiness(args: argparse.Namespace) -> int:
     }
     text = render_qmd_readiness(report)
     if args.output:
-        output_path = resolve_repo_path(args.output)
+        output_path = resolve_docs_output(args.output)
         if args.dry_run:
             if wants_json(args):
                 emit_json({"ok": True, "dry_run": True, "output": args.output, "content": text, **report})
@@ -1410,9 +1431,19 @@ def normalize_target_path(value: str, meta: dict[str, str]) -> str:
     value = value.replace("\\", "/").strip("/")
     if not value.endswith(".md"):
         value = f"{value}.md"
-    if not any(value.startswith(prefix + "/") for prefix in set(WIKI_DIRS.values())):
+    resolved = resolve_repo_path(value)
+    allowed_roots = [(ROOT / prefix).resolve() for prefix in set(WIKI_DIRS.values())]
+    if not any(root in resolved.parents for root in allowed_roots):
         raise ValueError(f"Target must be inside wiki categories: {value}")
-    return value
+    return resolved.relative_to(ROOT.resolve()).as_posix()
+
+
+def resolve_docs_output(value: str) -> Path:
+    resolved = resolve_repo_path(value)
+    docs_root = (ROOT / "docs").resolve()
+    if docs_root not in resolved.parents or resolved.suffix.casefold() != ".md":
+        raise ValueError(f"Generated reports must be Markdown files inside docs/: {value}")
+    return resolved
 
 
 def promoted_candidate_meta(meta: dict[str, str], target_rel: str, args: argparse.Namespace) -> dict[str, object]:
@@ -1965,7 +1996,6 @@ def command_configure(args: argparse.Namespace) -> int:
 def add_common_write_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--lock-timeout", type=float, default=10.0)
-    parser.add_argument("--actor-role", choices=sorted(ROLE_ORDER))
 
 
 def add_json_arg(parser: argparse.ArgumentParser) -> None:
@@ -2059,7 +2089,7 @@ def main(argv: list[str] | None = None) -> int:
     propose.add_argument("--suggested-target", default="")
     propose.add_argument("--value-reason", required=True)
     propose.add_argument("--confidence", default="medium", choices=["high", "medium", "low"])
-    propose.add_argument("--sensitivity", default="normal", choices=["normal", "sensitive", "secret"])
+    propose.add_argument("--sensitivity", default="normal", choices=["normal", "sensitive"])
     propose.add_argument("--body")
     propose.add_argument("--body-file")
     propose.add_argument("--slug")

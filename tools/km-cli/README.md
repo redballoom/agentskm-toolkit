@@ -23,7 +23,8 @@ Creating a compiler Profile additionally requires `--confirm-compiler`.
 The config file is the sole runtime source for Vault paths and roles. MCP
 servers pass the Profile explicitly. Environment variables are not used for
 config, Profile, role, or Vault selection. `--config` is reserved for isolated
-diagnostics and tests; `--actor-role` remains a deprecated compatibility flag.
+diagnostics and tests. Runtime roles always come from the selected Profile;
+command-line role overrides are not supported.
 
 ## Diagnose And Update
 
