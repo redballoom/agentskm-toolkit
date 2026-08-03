@@ -6,7 +6,7 @@ The plugin provides:
 
 - the `agentskm-capture` Skill;
 - a Codex MCP configuration backed by the published Python package;
-- slash command prompts for common knowledge-base operations;
+- compatibility prompt shortcuts for common knowledge-base operations;
 - local usage guidance for setup, capture, review, and promotion workflows.
 
 The plugin is intentionally lightweight. CLI and MCP implementation code is
@@ -35,27 +35,36 @@ role: compiler
 `.mcp.json` so a plugin release remains reproducible; upgrading AgentsKM means
 updating the plugin runtime pin and reinstalling the plugin.
 
-Run `agentskm doctor --profile codex` or `km_doctor` to diagnose the active
-version, Profile, role, config, and Vault. A code update requires an MCP
-reconnect or a new conversation; the active process is never killed in place.
+Ask Codex to run AgentsKM doctor to diagnose the active version, Profile, role,
+config, and Vault. A code update requires an MCP reconnect or a new
+conversation; the active process is never killed in place.
 
-## Slash Commands
+## Entry Points
 
-The plugin includes prompt-backed slash commands in `commands/*.md`. These
-commands guide Codex to use the plugin MCP tools; they do not bypass role checks
-or require a separate bundled command runtime.
+The stable interaction surface is the `agentskm-capture` Skill and the
+`agentskm` MCP server. Ask in natural language:
 
 ```text
-/km-doctor   Check package version, Profile, role, config, and Vault health.
-/km-capture  Review the current conversation and propose one reusable Inbox candidate.
-/km-search   Search reviewed Wiki knowledge first, then clearly label Inbox hits.
+Run AgentsKM doctor.
+Check this conversation for reusable knowledge.
+Search AgentsKM for <topic>.
 ```
 
-Use `/km-doctor` when setup, path selection, `uvx`, or MCP startup is unclear.
-Use `/km-capture` when the user explicitly asks to preserve a result from the
-current conversation. Use `/km-search <topic>` before repeating investigation
-work that may already exist in the Vault.
+`commands/*.md` remains as a compatibility layer for hosts that ingest plugin
+command prompts. Current Codex builds may migrate these files into internal
+Skills rather than display them in the slash-command menu. Therefore
+`/km-doctor`, `/km-capture`, and `/km-search` are convenient text shortcuts,
+not a guaranteed UI feature.
 
-These slash commands are intentionally conservative. Review and promotion remain
-role-aware MCP operations: reviewer Profiles can approve candidates, and compiler
-Profiles can promote or merge approved candidates.
+All entry points are intentionally conservative. Review and promotion remain
+role-aware MCP operations: reviewer Profiles can approve candidates, and
+compiler Profiles can promote or merge approved candidates.
+
+## Expected Plugin Behavior
+
+After the plugin is installed, Codex should expose the `agentskm` MCP tools and
+load the `agentskm-capture` Skill. On first use, the MCP server creates a
+default local config and empty Vault when no configuration exists. If MCP tools
+are missing, use the plugin status view, reconnect the MCP server, or start a
+new conversation. Do not look for a bundled `km.py` or manually edit the
+plugin cache.
