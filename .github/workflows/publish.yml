@@ -42,6 +42,12 @@ jobs:
       - name: Run self-contained acceptance workflow
         run: python tests/acceptance/test_km_workflow.py
 
+      - name: Check release contracts
+        run: |
+          python scripts/check_repo_purity.py
+          python scripts/check_versions.py
+          python scripts/build_plugin.py --check
+
   build:
     name: Build and verify package
     needs: test

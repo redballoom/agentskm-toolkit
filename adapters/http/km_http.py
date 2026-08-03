@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 ROOT = Path(__file__).resolve().parents[2]
-KM = ROOT / "tools" / "km-cli" / "km.py"
+KM_MODULE = "agentskm_toolkit"
 MAX_BODY = 1024 * 1024
 PROFILE = "default"
 CONFIG_PATH = ""
@@ -118,11 +118,14 @@ class KMHandler(BaseHTTPRequestHandler):
     def run_cli(self, args: list[str]) -> None:
         env = os.environ.copy()
         env["PYTHONUTF8"] = "1"
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        source_path = str(ROOT / "src")
+        env["PYTHONPATH"] = source_path if not existing_pythonpath else source_path + os.pathsep + existing_pythonpath
         args = [*args, "--profile", PROFILE]
         if CONFIG_PATH:
             args.extend(["--config", CONFIG_PATH])
         proc = subprocess.run(
-            [sys.executable, str(KM), *args],
+            [sys.executable, "-m", KM_MODULE, *args],
             cwd=ROOT,
             text=True,
             encoding="utf-8",

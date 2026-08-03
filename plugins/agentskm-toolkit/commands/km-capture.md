@@ -2,7 +2,7 @@
 description: Propose one reusable AgentsKM Inbox candidate
 ---
 
-Use the `agentskm-capture` Skill and the AgentsKM MCP server from this plugin.
+Use the `agentskm` Skill and the AgentsKM MCP server from this plugin.
 
 Review the current conversation for durable, reusable knowledge. Capture only
 verified technical solutions, debugging paths, architecture decisions, operating

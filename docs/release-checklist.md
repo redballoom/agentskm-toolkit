@@ -21,12 +21,16 @@ data. Never publish user Vault files or local config.
 ## Before TestPyPI
 
 - Confirm the release version in `pyproject.toml`.
-- Confirm the CLI and MCP versions match the package version.
+- Run `python scripts/check_versions.py` and confirm package, CLI, MCP, plugin,
+  and runtime pin all match.
+- Run `python scripts/check_repo_purity.py` and inspect the staged diff for
+  credentials or user data.
 - Run local acceptance:
 
 ```powershell
+python scripts\build_plugin.py --check
 python tests\acceptance\test_km_workflow.py
-uv build
+python -m build
 uvx --from (Get-ChildItem .\dist\agentskm_toolkit-*.whl | Select-Object -First 1).FullName agentskm --version
 ```
 
@@ -34,7 +38,7 @@ uvx --from (Get-ChildItem .\dist\agentskm_toolkit-*.whl | Select-Object -First 1
 - Confirm Git source install works:
 
 ```powershell
-uvx --from "git+https://github.com/redballoom/agentskm-toolkit.git@feat/uvx-productization" agentskm --version
+uvx --from "git+https://github.com/redballoom/agentskm-toolkit.git@feat/0.5-plugin-convergence" agentskm --version
 ```
 
 ## Publish To TestPyPI
@@ -46,7 +50,7 @@ uvx --from "git+https://github.com/redballoom/agentskm-toolkit.git@feat/uvx-prod
 - Verify installation from TestPyPI:
 
 ```powershell
-uvx --index-url https://test.pypi.org/simple/ --from agentskm-toolkit agentskm --version
+uvx --index-url https://test.pypi.org/simple/ --from agentskm-toolkit==0.5.0 agentskm --version
 ```
 
 ## Before Production PyPI
@@ -57,7 +61,7 @@ uvx --index-url https://test.pypi.org/simple/ --from agentskm-toolkit agentskm -
 - Verify production install:
 
 ```powershell
-uvx --from agentskm-toolkit agentskm --version
+uvx --from agentskm-toolkit==0.5.0 agentskm --version
 ```
 
 ## Codex Plugin Runtime
@@ -67,7 +71,7 @@ uvx --from agentskm-toolkit agentskm --version
 ```json
 {
   "command": "uvx",
-  "args": ["--from", "agentskm-toolkit==0.4.4", "agentskm", "mcp"]
+  "args": ["--from", "agentskm-toolkit==0.5.0", "agentskm", "mcp"]
 }
 ```
 
@@ -75,3 +79,5 @@ uvx --from agentskm-toolkit agentskm --version
 - Run `python scripts/build_plugin.py --check` and plugin schema validation.
 - Run plugin install and setup acceptance in Codex and at least one contributor
   host.
+- Do not move the stable Marketplace ref to the 0.5.0 plugin before production
+  PyPI can install the exact pin.

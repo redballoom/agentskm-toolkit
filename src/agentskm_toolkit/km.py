@@ -20,36 +20,23 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-try:
-    from .km_config import (
-        DEFAULT_VAULT,
-        RuntimeContext,
-        default_config,
-        get_config_path,
-        inspect_setup,
-        is_legacy_config,
-        read_json,
-        resolve_runtime,
-        validate_config,
-        vault_is_valid,
-    )
-except ImportError:
-    from km_config import (
-        DEFAULT_VAULT,
-        RuntimeContext,
-        default_config,
-        get_config_path,
-        inspect_setup,
-        is_legacy_config,
-        read_json,
-        resolve_runtime,
-        validate_config,
-        vault_is_valid,
-    )
+from . import __version__
+from .km_config import (
+    DEFAULT_VAULT,
+    RuntimeContext,
+    default_config,
+    get_config_path,
+    inspect_setup,
+    is_legacy_config,
+    read_json,
+    resolve_runtime,
+    validate_config,
+    vault_is_valid,
+)
 
-TOOLKIT_VERSION = "0.4.4"
+TOOLKIT_VERSION = __version__
 TOOLKIT_REPOSITORY = "https://github.com/redballoom/agentskm-toolkit"
-CODEX_MARKETPLACE = "agentskm-local"
+CODEX_MARKETPLACE = "agentskm-official"
 CODEX_PLUGIN = "agentskm-toolkit"
 TOOL_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = get_config_path()
@@ -58,6 +45,7 @@ KM_DIR = ROOT / ".km"
 LOCK_DIR = KM_DIR / "locks"
 TX_DIR = KM_DIR / "transactions"
 RUNTIME: RuntimeContext | None = None
+JSON_ERRORS = False
 SKIP_DIRS = {".git", ".obsidian", ".learnings", ".km"}
 WIKI_DIRS = {
     "entity": "wiki/entities",
@@ -163,6 +151,26 @@ def page_summary(page: Page, snippet: str | None = None) -> dict[str, object]:
 
 def emit_json(data: dict[str, object]) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def error_payload(exc: Exception) -> dict[str, object]:
+    message = str(exc)
+    if "AGENTSKM_CONFIG_MISSING" in message or "AGENTSKM_PROFILE_MISSING" in message:
+        next_action = "run_agentskm_setup"
+    elif isinstance(exc, PermissionError):
+        next_action = "use_a_profile_with_the_required_role"
+    elif isinstance(exc, FileNotFoundError):
+        next_action = "verify_the_configured_path"
+    elif isinstance(exc, FileExistsError):
+        next_action = "retry_after_the_conflicting_operation_finishes"
+    else:
+        next_action = "run_agentskm_doctor"
+    return {
+        "ok": False,
+        "error": message,
+        "error_type": exc.__class__.__name__,
+        "next_action": next_action,
+    }
 
 
 def wants_json(args: argparse.Namespace) -> bool:
@@ -1221,7 +1229,7 @@ def render_dashboard(pages: list[Page]) -> str:
     lines = [
         "# AgentsKM 审核面板",
         "",
-        "> 由 `python tools/km-cli/km.py dashboard` 生成。用于 Obsidian 中快速审核 Inbox、查看正式 Wiki 和 Raw 来源。",
+        "> 由 `agentskm dashboard` 生成。用于 Obsidian 中快速审核 Inbox、查看正式 Wiki 和 Raw 来源。",
         "",
         f"更新时间：{datetime.now().isoformat(timespec='seconds')}",
         "",
@@ -1595,7 +1603,10 @@ def update_duplicate_candidate(
 
 
 def setup_command_hint(profile: str) -> str:
-    return f'"{sys.executable}" "{Path(__file__).resolve()}" setup --profile {profile}'
+    return (
+        f"uvx --from agentskm-toolkit=={TOOLKIT_VERSION} agentskm setup "
+        f"--profile {profile}"
+    )
 
 
 def recommended_vault_path() -> Path:
@@ -1690,7 +1701,12 @@ def command_launcher(name: str) -> list[str]:
 
 
 def is_packaged_runtime() -> bool:
-    return (TOOL_ROOT / "__init__.py").exists() and (TOOL_ROOT / "cli.py").exists()
+    return source_checkout_root() is None
+
+
+def source_checkout_root() -> Path | None:
+    candidate = Path(__file__).resolve().parents[2]
+    return candidate if (candidate / ".git").is_dir() else None
 
 
 def emit_update_payload(args: argparse.Namespace, payload: dict[str, object]) -> int:
@@ -1719,12 +1735,12 @@ def command_packaged_update(args: argparse.Namespace) -> int:
         "recommended_mcp_command": [
             "uvx",
             "--from",
-            "agentskm-toolkit",
+            f"agentskm-toolkit=={TOOLKIT_VERSION}",
             "agentskm",
             "mcp",
         ],
         "next_action": (
-            "reconnect_mcp_to_let_the_host_resolve_the_latest_package"
+            "update_the_host_plugin_then_reconnect_mcp"
             if restart_required else
             "compare_current_process_version_with_the_package_index_or_git_release"
         ),
@@ -1733,16 +1749,17 @@ def command_packaged_update(args: argparse.Namespace) -> int:
 
 def command_update(args: argparse.Namespace) -> int:
     steps: list[dict[str, object]] = []
-    if (TOOL_ROOT / ".git").is_dir():
-        dirty = run_update_process(["git", "status", "--porcelain"], TOOL_ROOT)["stdout"]
+    checkout = source_checkout_root()
+    if checkout is not None:
+        dirty = run_update_process(["git", "status", "--porcelain"], checkout)["stdout"]
         if dirty:
             raise RuntimeError("Toolkit checkout has local changes; commit or stash them before update")
-        steps.append(run_update_process(["git", "fetch", "origin", "main"], TOOL_ROOT))
+        steps.append(run_update_process(["git", "fetch", "origin", "main"], checkout))
         if not args.check:
-            steps.append(run_update_process(["git", "merge", "--ff-only", "origin/main"], TOOL_ROOT))
-            build_script = TOOL_ROOT / "scripts" / "build_plugin.py"
+            steps.append(run_update_process(["git", "merge", "--ff-only", "origin/main"], checkout))
+            build_script = checkout / "scripts" / "build_plugin.py"
             if build_script.exists():
-                steps.append(run_update_process([sys.executable, str(build_script)], TOOL_ROOT))
+                steps.append(run_update_process([sys.executable, str(build_script)], checkout))
         mode = "git_checkout"
         restart_required = not args.check
     else:
@@ -1833,7 +1850,7 @@ def command_setup_status(args: argparse.Namespace) -> int:
     payload["next_action"] = (
         "ready" if payload["configured"] else "run_setup_or_start_the_plugin_once"
     )
-    payload["restart_required_after_setup"] = False
+    payload["reconnect_required_after_setup"] = True
     if wants_json(args):
         emit_json(payload)
         return 0
@@ -1960,7 +1977,8 @@ def command_setup(args: argparse.Namespace) -> int:
         "vault_name": args.vault_name,
         "vault_path": config["vaults"][args.vault_name]["path"],
         "restart_required": False,
-        "next_action": "ready",
+        "reconnect_required": True,
+        "next_action": "reconnect_mcp_to_refresh_profile_tools",
     }
     if args.dry_run:
         payload["preview"] = config
@@ -2011,10 +2029,35 @@ def add_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--profile", help="Select a configured Agent Profile")
 
 
+EXIT_CODE_HELP = "Exit codes: 0 success; 1 completed health/validation check with issues; 2 invalid input, configuration, path, permission, or runtime failure."
+
+
+class AgentsKMArgumentParser(argparse.ArgumentParser):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        kwargs.setdefault("formatter_class", argparse.ArgumentDefaultsHelpFormatter)
+        kwargs.setdefault("epilog", EXIT_CODE_HELP)
+        super().__init__(*args, **kwargs)
+
+    def error(self, message: str) -> None:
+        if JSON_ERRORS:
+            emit_json({
+                "ok": False,
+                "error": message,
+                "error_type": "ArgumentError",
+                "next_action": "run_command_help",
+            })
+            raise SystemExit(2)
+        super().error(message)
+
+
 def main(argv: list[str] | None = None) -> int:
-    global CONFIG_PATH
+    global CONFIG_PATH, JSON_ERRORS
     configure_utf8_stdio()
-    parser = argparse.ArgumentParser(prog="km")
+    JSON_ERRORS = "--json" in (list(argv) if argv is not None else sys.argv[1:])
+    parser = AgentsKMArgumentParser(
+        prog="agentskm",
+        description="Manage an AgentsKM configuration, local Vault, Inbox review, and Wiki promotion workflow.",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     setup_status = subparsers.add_parser("setup-status", help="Check AgentsKM configuration and Profile readiness")
@@ -2189,7 +2232,7 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (FileExistsError, FileNotFoundError, PermissionError, RuntimeError, ValueError) as exc:
         if "--json" in sys.argv:
-            emit_json({"ok": False, "error": str(exc), "error_type": exc.__class__.__name__})
+            emit_json(error_payload(exc))
         else:
             print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(2)

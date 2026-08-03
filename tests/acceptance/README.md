@@ -8,9 +8,9 @@ modified.
 python tests/acceptance/test_km_workflow.py
 ```
 
-Set `AGENTSKM_DATA_ROOT` only when intentionally overriding the built-in test
-fixture with another Vault. Runtime configuration under test always uses a
-temporary config file and Profile model.
+Set `AGENTSKM_TEST_FIXTURE_ROOT` only when intentionally overriding the
+built-in test fixture with another Vault. Runtime configuration under test
+always uses a temporary config file and Profile model.
 
 Coverage includes Bootstrap-only MCP tools, idempotent Setup, explicit
 Compiler confirmation, legacy config migration and backup, search priority,
