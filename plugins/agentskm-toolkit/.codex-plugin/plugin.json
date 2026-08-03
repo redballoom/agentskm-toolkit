@@ -1,6 +1,6 @@
 {
   "name": "agentskm-toolkit",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "description": "Multi-agent local knowledge capture, review, and promotion workflow.",
   "author": {
     "name": "Red Balloon"
@@ -26,11 +26,6 @@
     "capabilities": [
       "Interactive",
       "Write"
-    ],
-    "defaultPrompt": [
-      "运行 AgentsKM doctor，检查当前配置、Profile、角色和 Vault。",
-      "检查本次对话是否有值得沉淀的 AgentsKM 知识。",
-      "使用 AgentsKM 搜索知识库里已有的相关经验。"
     ]
   }
 }
