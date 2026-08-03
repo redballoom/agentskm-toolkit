@@ -50,7 +50,7 @@ uvx --from "git+https://github.com/redballoom/agentskm-toolkit.git@feat/0.5-plug
 - Verify installation from TestPyPI:
 
 ```powershell
-uvx --index-url https://test.pypi.org/simple/ --from agentskm-toolkit==0.5.0 agentskm --version
+uvx --isolated --no-cache --default-index https://test.pypi.org/simple/ --from agentskm-toolkit==0.5.0 agentskm --version
 ```
 
 ## Before Production PyPI
