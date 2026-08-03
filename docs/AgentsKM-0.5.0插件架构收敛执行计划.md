@@ -1,9 +1,13 @@
 # AgentsKM 0.5.0 插件架构收敛执行计划
 
-> 状态：待执行  
-> 日期：2026-08-03  
-> 适用仓库：`redballoom/agentskm-toolkit`  
-> 当前基线：分支 `codex/plugin-pypi-runtime`，提交 `7fba1dc`  
+> 状态：执行中（TestPyPI 已通过，待正式 PyPI 与 Marketplace）
+>
+> 日期：2026-08-03
+>
+> 适用仓库：`redballoom/agentskm-toolkit`
+>
+> 当前基线：分支 `codex/plugin-pypi-runtime`，提交 `7fba1dc`
+>
 > 目标版本：`0.5.0`
 
 ## 1. 目标
@@ -484,16 +488,15 @@ uvx --from agentskm-toolkit==<version> agentskm mcp ...
 
 满足以下全部条件后，0.5.0 才视为完成：
 
-- [ ] PR CI、版本契约和仓库纯度检查通过。
-- [ ] `src/agentskm_toolkit` 是唯一业务实现。
-- [ ] CLI 帮助、JSON 错误和 bootstrap 恢复可独立使用。
-- [ ] MCP 只保留结构化适配逻辑。
-- [ ] 一个正式 `agentskm` Skill 通过渐进式披露覆盖完整领域。
-- [ ] 不依赖 `source-command-*` 完成核心工作流。
-- [ ] 插件目录不含运行时源码、Vault、配置或无关文档。
-- [ ] 所有跨 Agent 用户文档使用已发布包入口。
+- [x] PR CI、版本契约和仓库纯度检查通过。
+- [x] `src/agentskm_toolkit` 是唯一业务实现。
+- [x] CLI 帮助、JSON 错误和 bootstrap 恢复可独立使用。
+- [x] MCP 只保留结构化适配逻辑。
+- [x] 一个正式 `agentskm` Skill 通过渐进式披露覆盖完整领域。
+- [x] 不依赖 `source-command-*` 完成核心工作流。
+- [x] 插件目录不含运行时源码、Vault、配置或无关文档。
+- [x] 所有跨 Agent 用户文档使用已发布包入口。
 - [ ] TestPyPI、PyPI、Marketplace 干净安装链路均通过。
 - [ ] Plugin、PyPI、CLI、MCP 和 pin 版本一致为 `0.5.0`。
-- [ ] contributor、reviewer、compiler 权限矩阵通过验收。
-- [ ] 真实用户 Vault 和配置未被测试或发布流程修改。
-
+- [x] contributor、reviewer、compiler 权限矩阵通过验收。
+- [x] 真实用户 Vault 和配置未被测试或发布流程修改。
