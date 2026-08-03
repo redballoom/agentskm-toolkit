@@ -1,0 +1,7 @@
+interface:
+  display_name: "AgentsKM 知识管理"
+  short_description: "跨 Agent 搜索、捕获、审核并沉淀本地可复用知识"
+  default_prompt: "使用 $agentskm 检查配置，并管理本次对话中的知识搜索与沉淀。"
+
+policy:
+  allow_implicit_invocation: true

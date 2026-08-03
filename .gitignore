@@ -25,3 +25,8 @@ build/
 *.log
 
 *.egg-info/
+
+# Tool caches and test reports
+.pytest_cache/
+.coverage
+coverage.xml

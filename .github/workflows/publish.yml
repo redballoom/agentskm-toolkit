@@ -29,18 +29,24 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v7
 
       - name: Run self-contained acceptance workflow
         run: python tests/acceptance/test_km_workflow.py
+
+      - name: Check release contracts
+        run: |
+          python scripts/check_repo_purity.py
+          python scripts/check_versions.py
+          python scripts/build_plugin.py --check
 
   build:
     name: Build and verify package
@@ -49,10 +55,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -93,7 +99,7 @@ jobs:
           test -d "$temp_root/vault/000_Inbox"
 
       - name: Upload distributions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: python-distributions
           path: dist/
@@ -110,7 +116,7 @@ jobs:
 
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-distributions
           path: dist/
@@ -132,7 +138,7 @@ jobs:
 
     steps:
       - name: Download distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: python-distributions
           path: dist/

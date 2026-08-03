@@ -1,6 +1,6 @@
 {
   "name": "agentskm-toolkit",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "Multi-agent local knowledge capture, review, and promotion workflow.",
   "author": {
     "name": "Red Balloon"
@@ -28,9 +28,7 @@
       "Write"
     ],
     "defaultPrompt": [
-      "检查本次对话是否有值得沉淀的知识。",
-      "查看知识库中到期的待审核候选。",
-      "搜索知识库里已有的相关经验。"
+      "使用 AgentsKM 检查配置，并管理本次对话中的知识搜索与沉淀。"
     ]
   }
 }

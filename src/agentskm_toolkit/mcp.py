@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """MCP stdio adapter for AgentsKM.
 
-This server exposes KM CLI operations as MCP tools. It does not implement KM
-rules directly; every tool call shells out to tools/km-cli/km.py --json.
+This server exposes packaged CLI operations as MCP tools. It does not
+implement Vault or workflow rules directly.
 """
 
 from __future__ import annotations
@@ -14,9 +14,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 
 ROOT = Path(__file__).resolve().parent
-KM = ROOT / "km.py"
 KM_MODULE = "agentskm_toolkit.km"
 PROTOCOL_VERSION = "2025-06-18"
 ROLE = "contributor"
@@ -24,11 +24,14 @@ PROFILE = "default"
 HOST = "generic"
 CONFIG_PATH = ""
 SETUP_STATUS: dict[str, Any] = {}
+SESSION_CONFIGURED = False
+BOOTSTRAP_ERROR: dict[str, Any] | None = None
+REQUESTED_BOOTSTRAP_ROLE = "contributor"
 ROLE_ORDER = {"contributor": 1, "reviewer": 2, "compiler": 3}
 
 
 def main(argv: list[str] | None = None) -> int:
-    global PROFILE, ROLE, HOST, CONFIG_PATH, SETUP_STATUS
+    global PROFILE, ROLE, HOST, CONFIG_PATH, SETUP_STATUS, SESSION_CONFIGURED, BOOTSTRAP_ERROR, REQUESTED_BOOTSTRAP_ROLE
     parser = argparse.ArgumentParser(prog="agentskm-mcp")
     parser.add_argument("--profile", default="default")
     parser.add_argument("--host", default="generic")
@@ -37,12 +40,25 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     PROFILE = args.profile
     HOST = args.host
+    REQUESTED_BOOTSTRAP_ROLE = args.bootstrap_role
+    ROLE = "contributor"
+    BOOTSTRAP_ERROR = None
     CONFIG_PATH = str(Path(args.config).expanduser().resolve()) if args.config else ""
     SETUP_STATUS = load_setup_status(PROFILE)
     if SETUP_STATUS.get("state") in {"config_missing", "profile_missing"}:
-        bootstrap_profile(PROFILE, HOST, args.bootstrap_role)
-        SETUP_STATUS = load_setup_status(PROFILE)
-    if SETUP_STATUS.get("configured"):
+        BOOTSTRAP_ERROR = bootstrap_profile(PROFILE, HOST, args.bootstrap_role)
+        if BOOTSTRAP_ERROR is None:
+            SETUP_STATUS = load_setup_status(PROFILE)
+        else:
+            SETUP_STATUS = {
+                **SETUP_STATUS,
+                "state": "bootstrap_failed",
+                "message": str(BOOTSTRAP_ERROR.get("error", "Automatic setup failed.")),
+                "bootstrap_error": BOOTSTRAP_ERROR,
+                "next_action": BOOTSTRAP_ERROR.get("next_action", "run_agentskm_setup"),
+            }
+    SESSION_CONFIGURED = bool(SETUP_STATUS.get("configured"))
+    if SESSION_CONFIGURED:
         ROLE = str(SETUP_STATUS["role"])
     configure_utf8_stdio()
     for raw in sys.stdin:
@@ -76,7 +92,7 @@ def handle_message(message: dict[str, Any]) -> None:
             },
             "serverInfo": {
                 "name": "agentskm",
-                "version": "0.4.4",
+                "version": __version__,
             },
         })
         return
@@ -98,11 +114,13 @@ def handle_message(message: dict[str, Any]) -> None:
         try:
             send_result(request_id, call_tool(tool_name, arguments))
         except (FileExistsError, FileNotFoundError, PermissionError, RuntimeError, ValueError) as exc:
-            send_result(request_id, tool_payload({
+            payload = {
                 "ok": False,
                 "error": str(exc),
                 "error_type": exc.__class__.__name__,
-            }, is_error=True))
+                "next_action": "run_km_doctor",
+            }
+            send_result(request_id, tool_payload(payload, is_error=True))
         return
     send_error(request_id, -32601, f"Method not found: {method}")
 
@@ -115,7 +133,7 @@ def tools() -> list[dict[str, Any]]:
         "description": "Check the selected Agent Profile and Vault without modifying user configuration.",
         "inputSchema": object_schema({}),
     }
-    if not SETUP_STATUS.get("configured"):
+    if not SESSION_CONFIGURED:
         return [
             setup_tool,
             doctor_tool(),
@@ -260,7 +278,7 @@ def update_tool() -> dict[str, Any]:
     return {
         "name": "km_update",
         "title": "Update AgentsKM",
-        "description": "Refresh AgentsKM from its configured GitHub marketplace or source checkout.",
+        "description": "Check or update AgentsKM. Packaged runtimes report the host-managed plugin update and reconnect action.",
         "inputSchema": object_schema({
             "check_only": {"type": "boolean", "default": False},
         }),
@@ -296,29 +314,35 @@ def object_schema(properties: dict[str, Any], required: list[str] | None = None)
 def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     refresh_setup_status()
     if name == "km_setup_status":
-        return cli_result(["setup-status", "--profile", PROFILE, "--json"])
+        return with_session_state(cli_result(["setup-status", "--profile", PROFILE, "--json"]))
     if name == "km_doctor":
-        return cli_result(["doctor", "--profile", PROFILE, "--json"])
+        return with_session_state(cli_result(["doctor", "--profile", PROFILE, "--json"]))
     if name == "km_update":
         update_host = "codex" if HOST == "codex" else "generic"
         update_args = ["update", "--host", update_host, "--json"]
         if bool(args.get("check_only", False)):
             update_args.append("--check")
         return cli_result(update_args)
-    if name == "km_setup_instructions" and not SETUP_STATUS.get("configured"):
+    if name == "km_setup_instructions" and not SESSION_CONFIGURED:
+        cli_command = [
+            "uvx", "--from", f"agentskm-toolkit=={__version__}", "agentskm",
+            "setup", "--profile", PROFILE, "--host", HOST,
+            "--role", REQUESTED_BOOTSTRAP_ROLE,
+        ]
+        if REQUESTED_BOOTSTRAP_ROLE == "compiler":
+            cli_command.append("--confirm-compiler")
+        if CONFIG_PATH:
+            cli_command.extend(["--config", CONFIG_PATH])
         payload = {
             **SETUP_STATUS,
             "ok": True,
             "write_via_mcp": False,
-            "cli_path": str(KM),
-            "next_step": (
-                f'Run "{sys.executable}" "{KM}" setup --profile {PROFILE} '
-                f"--host {HOST} --role contributor. The default Vault is created automatically."
-            ),
+            "cli_command": cli_command,
+            "next_action": "run_the_reported_cli_command_then_reconnect_mcp",
         }
         return tool_payload(payload)
-    if not SETUP_STATUS.get("configured"):
-        raise ValueError("AgentsKM is in bootstrap mode; complete setup and restart the MCP server")
+    if not SESSION_CONFIGURED:
+        raise ValueError("AgentsKM is in bootstrap mode; complete setup and reconnect the MCP server")
     mapping = {
         "km_status": ["status", "--json"],
         "km_pending": ["pending", "--json"],
@@ -385,6 +409,18 @@ def tool_payload(payload: dict[str, Any], is_error: bool = False) -> dict[str, A
     }
 
 
+def with_session_state(result: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(result.get("structuredContent") or {})
+    payload.update({
+        "session_configured": SESSION_CONFIGURED,
+        "session_role": ROLE if SESSION_CONFIGURED else None,
+        "reconnect_required": bool(SETUP_STATUS.get("reconnect_required", False)),
+    })
+    if BOOTSTRAP_ERROR:
+        payload["bootstrap_error"] = BOOTSTRAP_ERROR
+    return tool_payload(payload, is_error=bool(result.get("isError", False)))
+
+
 def parse_cli_json(stdout: str, stderr: str) -> dict[str, Any]:
     text = stdout.strip()
     if text:
@@ -397,6 +433,8 @@ def parse_cli_json(stdout: str, stderr: str) -> dict[str, Any]:
     return {
         "ok": False,
         "error": (stderr or stdout or "KM CLI returned no output").strip(),
+        "error_type": "CliProtocolError",
+        "next_action": "run_km_doctor",
     }
 
 
@@ -562,13 +600,25 @@ def load_setup_status(profile: str) -> dict[str, Any]:
 
 
 def refresh_setup_status() -> None:
-    global SETUP_STATUS, ROLE
-    SETUP_STATUS = load_setup_status(PROFILE)
-    if SETUP_STATUS.get("configured"):
-        ROLE = str(SETUP_STATUS["role"])
+    global SETUP_STATUS
+    live_status = load_setup_status(PROFILE)
+    live_configured = bool(live_status.get("configured"))
+    live_role = str(live_status.get("role", "")) if live_configured else ""
+    reconnect_required = (
+        live_configured != SESSION_CONFIGURED
+        or (SESSION_CONFIGURED and live_role != ROLE)
+    )
+    SETUP_STATUS = {
+        **live_status,
+        "session_configured": SESSION_CONFIGURED,
+        "session_role": ROLE if SESSION_CONFIGURED else None,
+        "reconnect_required": reconnect_required,
+    }
+    if BOOTSTRAP_ERROR:
+        SETUP_STATUS["bootstrap_error"] = BOOTSTRAP_ERROR
 
 
-def bootstrap_profile(profile: str, host: str, role: str) -> None:
+def bootstrap_profile(profile: str, host: str, role: str) -> dict[str, Any] | None:
     args = [
         "setup",
         "--profile", profile,
@@ -590,7 +640,14 @@ def bootstrap_profile(profile: str, host: str, role: str) -> None:
         capture_output=True,
     )
     if proc.returncode != 0:
-        return
+        payload = parse_cli_json(proc.stdout, proc.stderr)
+        return {
+            **payload,
+            "ok": False,
+            "state": "bootstrap_failed",
+            "next_action": payload.get("next_action", "run_agentskm_setup"),
+        }
+    return None
 
 
 if __name__ == "__main__":

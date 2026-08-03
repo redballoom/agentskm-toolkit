@@ -5,11 +5,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
-MCP = ROOT / "adapters" / "mcp" / "km_mcp.py"
+sys.path.insert(0, str(ROOT / "src"))
+
+from agentskm_toolkit import __version__  # noqa: E402
+
+
+DEFAULT_PACKAGE = f"agentskm-toolkit=={__version__}"
 
 
 def server_config(args: argparse.Namespace) -> dict[str, object]:
@@ -21,11 +26,6 @@ def server_config(args: argparse.Namespace) -> dict[str, object]:
     if args.config:
         common_args.extend(["--config", str(Path(args.config).expanduser().resolve())])
 
-    if args.runtime == "source":
-        return {
-            "command": "python",
-            "args": [str(MCP), *common_args],
-        }
     if args.runtime == "agentskm":
         return {
             "command": args.agentskm_command,
@@ -42,8 +42,8 @@ def main() -> int:
     parser.add_argument("--agent", choices=["claude", "cursor", "hermes", "codex", "generic"], required=True)
     parser.add_argument("--profile", required=True)
     parser.add_argument("--role", choices=["contributor", "reviewer", "compiler"], default="contributor")
-    parser.add_argument("--runtime", choices=["uvx", "agentskm", "source"], default="uvx")
-    parser.add_argument("--package", default="agentskm-toolkit")
+    parser.add_argument("--runtime", choices=["uvx", "agentskm"], default="uvx")
+    parser.add_argument("--package", default=DEFAULT_PACKAGE)
     parser.add_argument("--uvx-command", default="uvx")
     parser.add_argument("--agentskm-command", default="agentskm")
     parser.add_argument("--config")

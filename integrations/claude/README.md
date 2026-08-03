@@ -1,14 +1,24 @@
 # Claude Code Integration
 
-Generate a contributor MCP configuration:
+Add this contributor server to Claude Code's MCP configuration:
 
-```powershell
-python scripts/render_mcp_config.py `
-  --agent claude `
-  --profile claude `
-  --output .mcp.json
+```json
+{
+  "mcpServers": {
+    "agentskm": {
+      "command": "uvx",
+      "args": [
+        "--from", "agentskm-toolkit==0.5.0",
+        "agentskm", "mcp",
+        "--profile", "claude",
+        "--host", "claude",
+        "--bootstrap-role", "contributor"
+      ]
+    }
+  }
+}
 ```
 
-Copy or reference `CLAUDE.md` from the project instructions that should use
-AgentsKM. Grant `compiler` only to a trusted host that must apply approved
-Wiki changes.
+`uvx` must be available on `PATH`; no Toolkit clone is required. Add the short
+workflow rules from `CLAUDE.md` to projects that should use AgentsKM. Grant a
+compiler Profile only to a trusted host that must apply approved Wiki changes.

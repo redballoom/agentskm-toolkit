@@ -1,7 +1,7 @@
 {
-  "name": "agentskm-local",
+  "name": "agentskm-official",
   "interface": {
-    "displayName": "AgentsKM Local"
+    "displayName": "AgentsKM Official"
   },
   "plugins": [
     {

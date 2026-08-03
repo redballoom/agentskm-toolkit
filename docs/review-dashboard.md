@@ -1,6 +1,6 @@
 # AgentsKM 审核面板
 
-> 由 `python tools/km-cli/km.py dashboard` 生成。用于 Obsidian 中快速审核 Inbox、查看正式 Wiki 和 Raw 来源。
+> 由 `agentskm dashboard` 生成。用于 Obsidian 中快速审核 Inbox、查看正式 Wiki 和 Raw 来源。
 
 更新时间：2026-07-25T12:13:10
 

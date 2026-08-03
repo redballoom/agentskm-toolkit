@@ -24,14 +24,15 @@ repository.
 ## Required Delivery Sequence
 
 1. Make Toolkit changes in the canonical `agentskm-toolkit` repository.
-2. Run `python scripts\build_plugin.py` to refresh the self-contained plugin.
-3. Run `python scripts\build_plugin.py --check`.
-4. Run Python compilation checks for changed runtime files.
-5. Run `python tests\acceptance\test_km_workflow.py` with a disposable Vault
+2. Run `python scripts\build_plugin.py --check` to validate the lightweight plugin.
+3. Run `python scripts\check_versions.py` and `python scripts\check_repo_purity.py`.
+4. Confirm the plugin MCP version pin matches the intended PyPI release.
+5. Run Python syntax checks for changed runtime files.
+6. Run `python tests\acceptance\test_km_workflow.py` with a disposable Vault
    fixture.
-6. Review `git status` and ensure no Vault knowledge, user configuration,
+7. Review `git status` and ensure no Vault knowledge, user configuration,
    credentials, caches, or test output entered the repository.
-7. Commit and push only after the repository-level checks pass.
+8. Commit and push only after the repository-level checks pass.
 
 ## Repository Purity Rules
 

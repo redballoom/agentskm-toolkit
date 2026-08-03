@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentskm-toolkit"
-version = "0.4.4"
+version = "0.5.0"
 description = "Local multi-agent knowledge capture toolkit with CLI and MCP server."
 readme = "README.md"
 requires-python = ">=3.10"

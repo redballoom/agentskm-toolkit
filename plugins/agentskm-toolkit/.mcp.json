@@ -1,9 +1,12 @@
 {
   "mcpServers": {
     "agentskm": {
-      "command": "python",
+      "command": "uvx",
       "args": [
-        "./adapters/mcp/km_mcp.py",
+        "--from",
+        "agentskm-toolkit==0.5.0",
+        "agentskm",
+        "mcp",
         "--profile",
         "codex",
         "--host",
