@@ -19,7 +19,7 @@ Vault stores the user's knowledge assets
 - `tools/km-cli`: deterministic capture, review, promotion, merge, locking,
   transactions, and audit log source implementation
 - `adapters/mcp`: role-aware stdio MCP server source implementation
-- `plugins/agentskm-toolkit`: lightweight Codex plugin, capture Skill, slash-style prompt guidance, and PyPI-backed MCP template
+- `plugins/agentskm-toolkit`: lightweight Codex plugin, capture Skill, slash command prompts, and PyPI-backed MCP template
 - `integrations`: host-specific notes for Claude, Cursor, Hermes, and others
 - `scripts`: lightweight plugin validation and MCP configuration generation
 - `tests`: temporary-Vault end-to-end acceptance coverage
@@ -50,7 +50,7 @@ config file.
 
 The repository is also a Codex Git marketplace source through
 `.agents/plugins/marketplace.json`. The plugin supplies the `agentskm-capture`
-Skill, slash-style prompt guidance, and a PyPI-backed MCP configuration. It does
+Skill, slash command prompts, and a PyPI-backed MCP configuration. It does
 not bundle duplicate CLI or MCP source code. Productized MCP startup uses a version pin so each plugin
 release is reproducible:
 
@@ -64,8 +64,9 @@ release is reproducible:
 Use `python scripts/build_plugin.py --check` to verify the plugin contains the
 required host files and no legacy bundled runtime directories.
 
-The slash-style prompts are documented conventions, not a separate cross-host
-command runtime:
+The plugin command prompts live in `plugins/agentskm-toolkit/commands/*.md`.
+They guide Codex to call the role-aware MCP tools and are not a separate
+cross-host command runtime:
 
 ```text
 /km-doctor   diagnose setup, Profile, role, config, and Vault

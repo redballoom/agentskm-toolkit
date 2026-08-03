@@ -1,6 +1,6 @@
 ---
 name: agentskm-capture
-description: Set up and manage a local AgentsKM knowledge vault during technical and workflow conversations. Use when AgentsKM is newly installed or unconfigured, when an Agent Profile or Vault connection must be checked, when the user invokes slash-style prompts such as /km-doctor, /km-capture, or /km-search, or when a conversation may contain reusable solutions, debugging paths, architecture decisions, tool comparisons, operating procedures, corrections to existing knowledge, or the user asks to search, remember, defer, ignore, review, merge, or promote knowledge.
+description: Set up and manage a local AgentsKM knowledge vault during technical and workflow conversations. Use when AgentsKM is newly installed or unconfigured, when an Agent Profile or Vault connection must be checked, when the user invokes plugin slash commands such as /km-doctor, /km-capture, or /km-search, or when a conversation may contain reusable solutions, debugging paths, architecture decisions, tool comparisons, operating procedures, corrections to existing knowledge, or the user asks to search, remember, defer, ignore, review, merge, or promote knowledge.
 ---
 
 # AgentsKM Capture
@@ -35,16 +35,17 @@ The CLI is the only Setup writer. Never edit `%USERPROFILE%/.agentskm/config.jso
 - When the user asks to update AgentsKM, call `km_update` directly; do not add another confirmation prompt.
 - A code update returns `restart_required: true`. Ask the host to reconnect this MCP server when supported; otherwise tell the user to start a new conversation. Never terminate the active host process from the Skill.
 
-## Slash-style Prompts
+## Slash Commands
 
 Treat `/km-doctor`, `/km-capture`, and `/km-search` as user-facing shortcuts for
-this Skill. They are prompt conventions, not a separate command runtime.
+this Skill. They are prompt-backed plugin commands, not a separate command
+runtime.
 
 - `/km-doctor`: call `km_setup_status` when available, then `km_doctor`, and report the active Profile, role, config path, Vault path, and next action.
 - `/km-capture`: evaluate the current conversation, search for duplicates, propose one reusable Inbox candidate when appropriate, then ask `沉淀 / 稍后 / 忽略`.
 - `/km-search <topic>`: search reviewed Wiki content first, then include Inbox results only when useful and clearly label them as unreviewed.
 
-Do not treat slash-style prompts as permission escalation. All role boundaries
+Do not treat slash commands as permission escalation. All role boundaries
 and approval requirements still apply.
 
 ## Start Of Work

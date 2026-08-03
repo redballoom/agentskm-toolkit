@@ -6,7 +6,7 @@ The plugin provides:
 
 - the `agentskm-capture` Skill;
 - a Codex MCP configuration backed by the published Python package;
-- slash-style prompt guidance for common knowledge-base operations;
+- slash command prompts for common knowledge-base operations;
 - local usage guidance for setup, capture, review, and promotion workflows.
 
 The plugin is intentionally lightweight. CLI and MCP implementation code is
@@ -39,11 +39,11 @@ Run `agentskm doctor --profile codex` or `km_doctor` to diagnose the active
 version, Profile, role, config, and Vault. A code update requires an MCP
 reconnect or a new conversation; the active process is never killed in place.
 
-## Slash-style prompts
+## Slash Commands
 
-Codex plugins currently expose the reliable workflow through Skills and MCP. The
-commands below are documented prompt conventions for users and Agents; they do
-not bypass role checks or require a separate bundled command runtime.
+The plugin includes prompt-backed slash commands in `commands/*.md`. These
+commands guide Codex to use the plugin MCP tools; they do not bypass role checks
+or require a separate bundled command runtime.
 
 ```text
 /km-doctor   Check package version, Profile, role, config, and Vault health.
@@ -56,6 +56,6 @@ Use `/km-capture` when the user explicitly asks to preserve a result from the
 current conversation. Use `/km-search <topic>` before repeating investigation
 work that may already exist in the Vault.
 
-These prompt aliases are intentionally conservative. Review and promotion remain
+These slash commands are intentionally conservative. Review and promotion remain
 role-aware MCP operations: reviewer Profiles can approve candidates, and compiler
 Profiles can promote or merge approved candidates.

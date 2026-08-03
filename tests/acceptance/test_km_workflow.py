@@ -743,6 +743,11 @@ def test_mcp_role_profiles() -> None:
 def test_lightweight_plugin() -> None:
     assert not (PLUGIN / "tools").exists()
     assert not (PLUGIN / "adapters").exists()
+    command_names = {path.name for path in (PLUGIN / "commands").glob("*.md")}
+    assert command_names == {"km-doctor.md", "km-capture.md", "km-search.md"}
+    for command in command_names:
+        text = (PLUGIN / "commands" / command).read_text(encoding="utf-8")
+        assert "AgentsKM MCP" in text
     skill_path = PLUGIN / "skills" / "agentskm-capture" / "SKILL.md"
     assert skill_path.exists()
     manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))

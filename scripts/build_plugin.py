@@ -13,12 +13,15 @@ REQUIRED_PATHS = (
     PLUGIN / ".codex-plugin" / "plugin.json",
     PLUGIN / ".mcp.json",
     PLUGIN / "README.md",
-    PLUGIN / "commands" / "README.md",
+    PLUGIN / "commands" / "km-doctor.md",
+    PLUGIN / "commands" / "km-capture.md",
+    PLUGIN / "commands" / "km-search.md",
     PLUGIN / "skills" / "agentskm-capture" / "SKILL.md",
 )
-FORBIDDEN_RUNTIME_PATHS = (
+FORBIDDEN_PATHS = (
     PLUGIN / "adapters",
     PLUGIN / "tools",
+    PLUGIN / "commands" / "README.md",
 )
 
 
@@ -32,15 +35,15 @@ def main() -> int:
     parser.parse_args()
 
     missing = [path for path in REQUIRED_PATHS if not path.is_file()]
-    bundled = [path for path in FORBIDDEN_RUNTIME_PATHS if path.exists()]
-    if missing or bundled:
+    forbidden = [path for path in FORBIDDEN_PATHS if path.exists()]
+    if missing or forbidden:
         if missing:
             print("Plugin files are missing:")
             for path in missing:
                 print(f"- {path.relative_to(ROOT).as_posix()}")
-        if bundled:
-            print("Plugin contains legacy bundled runtime paths:")
-            for path in bundled:
+        if forbidden:
+            print("Plugin contains forbidden paths:")
+            for path in forbidden:
                 print(f"- {path.relative_to(ROOT).as_posix()}")
         return 1
 
