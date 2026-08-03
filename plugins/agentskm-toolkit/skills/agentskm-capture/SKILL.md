@@ -1,6 +1,6 @@
 ---
 name: agentskm-capture
-description: Set up and manage a local AgentsKM knowledge vault during technical and workflow conversations. Use when AgentsKM is newly installed or unconfigured, when an Agent Profile or Vault connection must be checked, or when a conversation may contain reusable solutions, debugging paths, architecture decisions, tool comparisons, operating procedures, corrections to existing knowledge, or the user asks to search, remember, defer, ignore, review, merge, or promote knowledge.
+description: Set up and manage a local AgentsKM knowledge vault during technical and workflow conversations. Use when AgentsKM is newly installed or unconfigured, when an Agent Profile or Vault connection must be checked, when the user invokes slash-style prompts such as /km-doctor, /km-capture, or /km-search, or when a conversation may contain reusable solutions, debugging paths, architecture decisions, tool comparisons, operating procedures, corrections to existing knowledge, or the user asks to search, remember, defer, ignore, review, merge, or promote knowledge.
 ---
 
 # AgentsKM Capture
@@ -24,7 +24,7 @@ If only Setup, Doctor, and Update tools are available, automatic bootstrap could
 2. Reuse an existing configured Vault when one is listed. Otherwise use the recommended default path unless the user asks for another Vault.
 3. Use the Profile requested by the host. Recommend `contributor` for Hermes, Claude, Cursor, automation, and other new Agents. A `compiler` Profile requires explicit user confirmation.
 4. Show the exact Profile, role, Vault name, Vault path, and config path that Setup will change.
-5. Use a local shell to run the bundled `km.py setup` CLI reported by `km_setup_instructions`. Use `--confirm-compiler` only when the user explicitly approved a Compiler Profile.
+5. Use a local shell to run the exact packaged CLI command reported by `km_setup_instructions`. The plugin runtime is resolved from PyPI through `uvx`; do not look for a bundled `km.py`. Use `--confirm-compiler` only when the user explicitly approved a Compiler Profile.
 6. Call `km_setup_status` again. Setup and Vault path changes are re-read on each operation and do not normally require an Agent restart.
 
 The CLI is the only Setup writer. Never edit `%USERPROFILE%/.agentskm/config.json` directly and never invent an MCP configuration-writing call. Repeated Setup is idempotent; an existing conflicting Profile must be shown to the user rather than overwritten. Do not use environment variables to select the config, Profile, role, or Vault.
@@ -34,6 +34,18 @@ The CLI is the only Setup writer. Never edit `%USERPROFILE%/.agentskm/config.jso
 - Use `km_doctor` when installation, Profile, role, config, Vault, permissions, or stale locks may be wrong.
 - When the user asks to update AgentsKM, call `km_update` directly; do not add another confirmation prompt.
 - A code update returns `restart_required: true`. Ask the host to reconnect this MCP server when supported; otherwise tell the user to start a new conversation. Never terminate the active host process from the Skill.
+
+## Slash-style Prompts
+
+Treat `/km-doctor`, `/km-capture`, and `/km-search` as user-facing shortcuts for
+this Skill. They are prompt conventions, not a separate command runtime.
+
+- `/km-doctor`: call `km_setup_status` when available, then `km_doctor`, and report the active Profile, role, config path, Vault path, and next action.
+- `/km-capture`: evaluate the current conversation, search for duplicates, propose one reusable Inbox candidate when appropriate, then ask `沉淀 / 稍后 / 忽略`.
+- `/km-search <topic>`: search reviewed Wiki content first, then include Inbox results only when useful and clearly label them as unreviewed.
+
+Do not treat slash-style prompts as permission escalation. All role boundaries
+and approval requirements still apply.
 
 ## Start Of Work
 

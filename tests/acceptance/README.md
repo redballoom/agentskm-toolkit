@@ -18,4 +18,4 @@ role rejection and override prevention, path boundaries, Frontmatter escaping,
 secret rejection, reminders, review, snooze, promotion, merge, duplicate
 candidate contribution merging, dashboard generation, qmd readiness, HTTP
 authentication, Profile-based MCP exposure, second-Agent configuration
-generation, Skill Setup guidance, and self-contained plugin packaging.
+generation, Skill Setup guidance, and lightweight PyPI-backed plugin packaging.

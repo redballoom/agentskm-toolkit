@@ -28,6 +28,9 @@
       "Write"
     ],
     "defaultPrompt": [
+      "/km-doctor 检查当前 AgentsKM 配置、Profile、角色和 Vault。",
+      "/km-capture 检查本次对话是否有值得沉淀的知识。",
+      "/km-search 搜索知识库里已有的相关经验。",
       "检查本次对话是否有值得沉淀的知识。",
       "查看知识库中到期的待审核候选。",
       "搜索知识库里已有的相关经验。"

@@ -60,16 +60,18 @@ uvx --index-url https://test.pypi.org/simple/ --from agentskm-toolkit agentskm -
 uvx --from agentskm-toolkit agentskm --version
 ```
 
-## After Production PyPI
+## Codex Plugin Runtime
 
-- Switch the plugin MCP template from bundled source runtime to:
+- Pin the plugin MCP template to the verified production release:
 
 ```json
 {
   "command": "uvx",
-  "args": ["--from", "agentskm-toolkit", "agentskm", "mcp"]
+  "args": ["--from", "agentskm-toolkit==0.4.4", "agentskm", "mcp"]
 }
 ```
 
+- Confirm the plugin contains no bundled `tools/` or `adapters/` runtime copy.
+- Run `python scripts/build_plugin.py --check` and plugin schema validation.
 - Run plugin install and setup acceptance in Codex and at least one contributor
   host.

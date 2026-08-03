@@ -1,6 +1,6 @@
 # AgentsKM Productization Plan
 
-Status: active on `feat/uvx-productization`.
+Status: Python package released; lightweight Codex plugin migration in progress.
 
 ## Decision
 
@@ -16,7 +16,7 @@ config.json    -> Profile and Vault binding
 Vault          -> user knowledge assets
 ```
 
-## Phase 1 Scope
+## Completed Package Scope
 
 - Add `pyproject.toml`.
 - Add `src/agentskm_toolkit` package entrypoints.
@@ -24,16 +24,16 @@ Vault          -> user knowledge assets
 - Support `agentskm mcp` and `uvx --from agentskm-toolkit agentskm mcp`
   startup shapes.
 - Keep source-tree CLI/MCP paths working for development.
-- Keep plugin runtime copies synchronized during transition.
+- Keep plugin runtime copies synchronized during the pre-release transition.
 - Add acceptance coverage for package and uvx entrypoints.
 
-## Non-goals
+## Lightweight Plugin Scope
 
-- No PyPI production release yet.
-- No npm wrapper yet.
-- No plugin default switch to PyPI before the package is published.
-- No Vault or user config in package artifacts.
-- No rewrite of the KM workflow internals in this phase.
+- Keep Skill and MCP registration in the Codex plugin.
+- Resolve the published CLI/MCP runtime through `uvx` with an exact version pin.
+- Remove duplicated `tools/` and `adapters/` source from the plugin bundle.
+- Keep Vault data and user config outside every release artifact.
+- Validate Setup and role behavior through the same packaged runtime used by hosts.
 
 ## Required Invariants
 

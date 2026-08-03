@@ -72,7 +72,7 @@ def main() -> int:
         test_http_adapter()
         test_mcp_role_profiles()
         test_second_agent_config()
-        test_self_contained_plugin()
+        test_lightweight_plugin()
 
     print("Acceptance workflow passed.")
     return 0
@@ -740,23 +740,40 @@ def test_mcp_role_profiles() -> None:
     assert candidate["source_tool"] == "codex-mcp"
 
 
-def test_self_contained_plugin() -> None:
-    plugin_cli = PLUGIN / "tools" / "km-cli" / "km.py"
-    plugin_mcp = PLUGIN / "adapters" / "mcp" / "km_mcp.py"
-    assert plugin_cli.exists() and plugin_mcp.exists()
+def test_lightweight_plugin() -> None:
+    assert not (PLUGIN / "tools").exists()
+    assert not (PLUGIN / "adapters").exists()
     skill_path = PLUGIN / "skills" / "agentskm-capture" / "SKILL.md"
     assert skill_path.exists()
     manifest = json.loads((PLUGIN / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert manifest["version"] == EXPECTED_VERSION
+    server = json.loads((PLUGIN / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["agentskm"]
+    assert server["command"] == "uvx"
+    assert server["args"][:4] == [
+        "--from",
+        f"agentskm-toolkit=={EXPECTED_VERSION}",
+        "agentskm",
+        "mcp",
+    ]
+    assert server["args"][server["args"].index("--profile") + 1] == "codex"
+    assert server["args"][server["args"].index("--bootstrap-role") + 1] == "compiler"
     skill_text = skill_path.read_text(encoding="utf-8")
     assert "km_setup_status" in skill_text
     assert "The CLI is the only Setup writer" in skill_text
+    assert "do not look for a bundled `km.py`" in skill_text
     assert "start a new conversation" in skill_text
     assert "km_doctor" in skill_text and "km_update" in skill_text
-    responses = mcp_exchange(plugin_mcp, "codex", [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+
+    local_args = list(server["args"])
+    local_args[local_args.index("--from") + 1] = str(ROOT)
+    input_text = "\n".join([
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        "",
     ])
+    proc = run_uvx_process([server["command"], *local_args, "--config", str(TEST_CONFIG)], input_text)
+    assert proc.returncode == 0, proc.stderr
+    responses = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
     names = {item["name"] for item in responses[1]["result"]["tools"]}
     assert "km_setup_status" in names and "km_promote_candidate" in names
     assert "km_configure_vault" not in names

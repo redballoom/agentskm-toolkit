@@ -19,9 +19,9 @@ Vault stores the user's knowledge assets
 - `tools/km-cli`: deterministic capture, review, promotion, merge, locking,
   transactions, and audit log source implementation
 - `adapters/mcp`: role-aware stdio MCP server source implementation
-- `plugins/agentskm-toolkit`: Codex plugin, capture Skill, and MCP template
+- `plugins/agentskm-toolkit`: lightweight Codex plugin, capture Skill, slash-style prompt guidance, and PyPI-backed MCP template
 - `integrations`: host-specific notes for Claude, Cursor, Hermes, and others
-- `scripts`: plugin packaging and MCP configuration generation
+- `scripts`: lightweight plugin validation and MCP configuration generation
 - `tests`: temporary-Vault end-to-end acceptance coverage
 
 ## Package Entry
@@ -50,20 +50,28 @@ config file.
 
 The repository is also a Codex Git marketplace source through
 `.agents/plugins/marketplace.json`. The plugin supplies the `agentskm-capture`
-Skill and an MCP configuration template. Before the Python package is published,
-the plugin template remains self-contained and starts its bundled MCP source.
-After publishing, productized MCP startup should use:
+Skill, slash-style prompt guidance, and a PyPI-backed MCP configuration. It does
+not bundle duplicate CLI or MCP source code. Productized MCP startup uses a version pin so each plugin
+release is reproducible:
 
 ```json
 {
   "command": "uvx",
-  "args": ["--from", "agentskm-toolkit", "agentskm", "mcp", "--profile", "codex", "--host", "codex"]
+  "args": ["--from", "agentskm-toolkit==0.4.4", "agentskm", "mcp", "--profile", "codex", "--host", "codex", "--bootstrap-role", "compiler"]
 }
 ```
 
-During development, the plugin still carries synchronized CLI/MCP runtime copies
-so existing local plugin installs remain self-contained. Use
-`scripts/build_plugin.py --check` to verify those copies are current.
+Use `python scripts/build_plugin.py --check` to verify the plugin contains the
+required host files and no legacy bundled runtime directories.
+
+The slash-style prompts are documented conventions, not a separate cross-host
+command runtime:
+
+```text
+/km-doctor   diagnose setup, Profile, role, config, and Vault
+/km-capture  inspect the current conversation and propose one Inbox candidate
+/km-search   search reviewed Wiki knowledge before repeating investigation
+```
 
 ## Other Agents
 

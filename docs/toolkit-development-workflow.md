@@ -24,8 +24,8 @@ repository.
 ## Required Delivery Sequence
 
 1. Make Toolkit changes in the canonical `agentskm-toolkit` repository.
-2. Run `python scripts\build_plugin.py` to refresh the self-contained plugin.
-3. Run `python scripts\build_plugin.py --check`.
+2. Run `python scripts\build_plugin.py --check` to validate the lightweight plugin.
+3. Confirm the plugin MCP version pin matches the intended PyPI release.
 4. Run Python compilation checks for changed runtime files.
 5. Run `python tests\acceptance\test_km_workflow.py` with a disposable Vault
    fixture.
