@@ -1,13 +1,13 @@
 # Codex Plugin UI Migration Gate
 
-The 0.5.0 candidate uses one formal `agentskm` Skill. The three files under
+The 0.5.x plugin uses one formal `agentskm` Skill. The three files under
 `commands/` remain only as a controlled compatibility baseline because Codex
 may migrate them into internal `source-command-*` Skills. They are not a
 separate runtime and do not guarantee slash-menu entries.
 
 ## Preconditions
 
-- Publish `agentskm-toolkit==0.5.0` to production PyPI before testing the
+- Publish the matching runtime version to production PyPI before testing the
   unchanged plugin pin. A TestPyPI-only experiment must use a separate
   temporary MCP config that explicitly selects the TestPyPI index.
 - Push the candidate plugin to a dedicated remote branch.

@@ -18,13 +18,17 @@ they contain no business logic.
 
 ## Codex Plugin
 
-After the matching `0.5.0` runtime is published, install the official GitHub
+After the matching `0.5.1` runtime is published, install the official GitHub
 Marketplace source and plugin:
 
 ```powershell
-codex plugin marketplace add redballoom/agentskm-toolkit --ref <stable-ref> --sparse plugins/agentskm-toolkit
+codex plugin marketplace add redballoom/agentskm-toolkit --ref main
 codex plugin add agentskm-toolkit@agentskm-official
 ```
+
+The Marketplace manifest is stored at the repository root. Do not pass
+`--sparse plugins/agentskm-toolkit` with this repository layout; Codex must
+fetch the root manifest before it can resolve the plugin subdirectory.
 
 The plugin installs one `agentskm` Skill and an MCP registration. On MCP start,
 `uvx` resolves the exact PyPI runtime pin; no repository clone or global
@@ -34,7 +38,7 @@ The first start creates the requested Profile, the config at
 `%USERPROFILE%\.agentskm\config.json`, and an empty default Vault at
 `%USERPROFILE%\Documents\AgentsKM\vault` when they do not exist.
 
-`commands/*.md` is temporarily retained only for the 0.5.0 UI migration
+`commands/*.md` is temporarily retained only for the 0.5.x UI migration
 experiment. Codex may convert those files into `source-command-*` Skills;
 natural-language use of the formal `agentskm` Skill is the product contract.
 
@@ -45,7 +49,7 @@ other MCP-capable hosts use the same runtime directly:
 
 ```text
 command: uvx
-args: --from agentskm-toolkit==0.5.0 agentskm mcp --profile <profile> --host <host> --bootstrap-role contributor
+args: --from agentskm-toolkit==0.5.1 agentskm mcp --profile <profile> --host <host> --bootstrap-role contributor
 ```
 
 Use `scripts/render_mcp_config.py` only as a source-repository convenience for
@@ -74,6 +78,6 @@ python scripts/build_plugin.py --check
 python tests/acceptance/test_km_workflow.py
 ```
 
-Acceptance tests write only to temporary Vaults. The `0.5.0` plugin pin must not
+Acceptance tests write only to temporary Vaults. The `0.5.1` plugin pin must not
 be exposed through a stable Marketplace ref until production PyPI can install
-`agentskm-toolkit==0.5.0`.
+`agentskm-toolkit==0.5.1`.

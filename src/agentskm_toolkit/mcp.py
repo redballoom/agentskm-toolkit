@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .km import WIKI_DIRS
 
 ROOT = Path(__file__).resolve().parent
 KM_MODULE = "agentskm_toolkit.km"
@@ -208,7 +209,7 @@ def tools() -> list[dict[str, Any]]:
             "inputSchema": object_schema({
                 "title": {"type": "string"},
                 "value_reason": {"type": "string"},
-                "type": {"type": "string", "default": "note"},
+                "type": {"type": "string", "enum": sorted(WIKI_DIRS), "default": "note"},
                 "tags": {"type": "string", "description": "Comma-separated tags without implicit-capture."},
                 "source_refs": {"type": "array", "items": {"type": "string"}},
                 "suggested_target": {"type": "string"},

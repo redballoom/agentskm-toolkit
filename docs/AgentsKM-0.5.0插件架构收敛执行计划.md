@@ -1,6 +1,6 @@
 # AgentsKM 0.5.0 插件架构收敛执行计划
 
-> 状态：执行中（TestPyPI 已通过，待正式 PyPI 与 Marketplace）
+> 状态：已完成（0.5.0 已发布；发布收尾缺口转入 0.5.1 修复）
 >
 > 日期：2026-08-03
 >
@@ -496,7 +496,7 @@ uvx --from agentskm-toolkit==<version> agentskm mcp ...
 - [x] 不依赖 `source-command-*` 完成核心工作流。
 - [x] 插件目录不含运行时源码、Vault、配置或无关文档。
 - [x] 所有跨 Agent 用户文档使用已发布包入口。
-- [ ] TestPyPI、PyPI、Marketplace 干净安装链路均通过。
-- [ ] Plugin、PyPI、CLI、MCP 和 pin 版本一致为 `0.5.0`。
+- [x] TestPyPI、PyPI、Marketplace 干净安装链路均通过。
+- [x] Plugin、PyPI、CLI、MCP 和 pin 版本一致为 `0.5.0`。
 - [x] contributor、reviewer、compiler 权限矩阵通过验收。
 - [x] 真实用户 Vault 和配置未被测试或发布流程修改。

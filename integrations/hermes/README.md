@@ -6,7 +6,7 @@ Register AgentsKM as a stdio MCP server in Hermes:
 {
   "command": "uvx",
   "args": [
-    "--from", "agentskm-toolkit==0.5.0",
+    "--from", "agentskm-toolkit==0.5.1",
     "agentskm", "mcp",
     "--profile", "hermes-agent",
     "--host", "hermes",
