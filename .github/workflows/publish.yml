@@ -11,9 +11,6 @@ on:
         options:
           - testpypi
           - pypi
-  release:
-    types:
-      - published
 
 permissions:
   contents: read
@@ -130,7 +127,7 @@ jobs:
     name: Publish to PyPI
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi' && github.ref == 'refs/heads/main')
+    if: inputs.target == 'pypi' && github.ref == 'refs/heads/main'
     environment: pypi
     permissions:
       contents: read

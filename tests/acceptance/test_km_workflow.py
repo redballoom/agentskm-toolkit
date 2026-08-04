@@ -24,7 +24,7 @@ CLI = [sys.executable, "-m", "agentskm_toolkit"]
 HTTP_ADAPTER = ROOT / "adapters" / "http" / "km_http.py"
 MCP_CONFIG_RENDERER = ROOT / "scripts" / "render_mcp_config.py"
 PLUGIN = ROOT / "plugins" / "agentskm-toolkit"
-EXPECTED_VERSION = "0.5.0"
+EXPECTED_VERSION = "0.5.1"
 CONTRIBUTOR_TOOLS = {
     "km_setup_status", "km_doctor", "km_update", "km_status", "km_pending",
     "km_reminders", "km_search", "km_validate", "km_lint",
@@ -780,8 +780,14 @@ def test_mcp_role_profiles() -> None:
         {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "km_search", "arguments": {"query": "领星 API 鉴权", "limit": 1}}},
         {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "km_propose_capture", "arguments": {"title": "MCP 来源验收", "value_reason": "验证来源身份", "dry_run": True}}},
     ])
-    compiler_names = {item["name"] for item in compiler[1]["result"]["tools"]}
+    compiler_tools = compiler[1]["result"]["tools"]
+    compiler_names = {item["name"] for item in compiler_tools}
     assert compiler_names == COMPILER_TOOLS
+    capture_tool = next(item for item in compiler_tools if item["name"] == "km_propose_capture")
+    capture_type = capture_tool["inputSchema"]["properties"]["type"]
+    assert capture_type["enum"] == [
+        "comparison", "concept", "entity", "guide", "note", "query", "summary",
+    ]
     assert compiler[2]["result"]["structuredContent"]["matches"][0]["layer"] == "wiki"
     candidate = compiler[3]["result"]["structuredContent"]["candidate"]
     assert candidate["agent_id"] == "codex"
