@@ -26,6 +26,9 @@ installation, acceptance, daily use, updates, and troubleshooting for:
 - direct CLI and automation users;
 - Toolkit maintainers and release operators.
 
+The current component boundaries, configuration model, role enforcement, and
+write-safety contract are documented in [Architecture](docs/architecture.md).
+
 ## Codex Plugin
 
 Install the official GitHub Marketplace source and plugin. The current plugin

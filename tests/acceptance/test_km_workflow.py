@@ -96,21 +96,21 @@ def create_fixture_vault(path: Path) -> None:
     )
     write_fixture_page(
         path / "wiki/queries/lingxing-api-auth.md",
-        "领星 API 鉴权",
+        "API 令牌刷新",
         "query",
-        "领星 API 鉴权需要 access token，并在过期后刷新。",
+        "API 鉴权需要访问令牌，并在过期后安全刷新。",
     )
     write_fixture_page(
         path / "wiki/queries/wsl-windows-chrome-cdp.md",
-        "WSL 连接 Windows Chrome CDP",
+        "Linux 环境连接宿主浏览器 CDP",
         "query",
-        "WSL 如何连接 Windows Chrome CDP：使用 Windows 主机地址和远程调试端口。",
+        "Linux 环境连接宿主浏览器 CDP：使用宿主地址和受限远程调试端口。",
     )
     write_fixture_page(
         path / "wiki/queries/docsify-api-extraction.md",
-        "Docsify API 提取方法论",
+        "静态文档 API 提取方法",
         "query",
-        "Docsify API 提取方法论包括定位 Markdown 源文件和验证请求参数。",
+        "静态文档 API 提取方法包括定位源文件和验证请求参数。",
     )
     write_fixture_page(
         path / "000_Inbox/source-review-needed.md",
@@ -142,7 +142,7 @@ def write_fixture_page(path: Path, title: str, page_type: str, body: str, *, inb
 def test_cli_read_paths() -> None:
     status = run_km(["status", "--json"])
     assert status["layers"]["wiki"] >= 1
-    search = run_km(["search", "领星 API 鉴权", "--limit", "1", "--json"])
+    search = run_km(["search", "API 令牌刷新", "--limit", "1", "--json"])
     assert search["matches"][0]["path"] == "wiki/queries/lingxing-api-auth.md"
     pending = run_km(["pending", "--json"])
     assert any(item["status"] == "pending-source-review" for item in pending["candidates"])
@@ -662,7 +662,7 @@ def test_review_and_promote_workflow() -> None:
 def test_merge_workflow() -> None:
     proposed = run_km([
         "propose",
-        "--title", "领星 API 鉴权增量边界",
+        "--title", "API 令牌刷新增量边界",
         "--type", "query",
         "--tags", "api,auth,lingxing",
         "--source-ref", "conversation:acceptance-merge",
@@ -721,6 +721,8 @@ def test_dashboard_and_qmd() -> None:
     qmd = run_km(["qmd-readiness", "--profile", "km-reviewer", "--json"])
     assert qmd["ready"] is False
     assert qmd["top5_hit_rate"] >= 0.9
+    assert qmd["queries"]
+    assert all(item["query"] for item in qmd["queries"])
 
 
 def test_http_adapter() -> None:
@@ -735,7 +737,7 @@ def test_http_adapter() -> None:
     try:
         health_status, health = http_get(port, "/health")
         assert health_status == 200 and health["ok"] is True
-        search_route = "/search?" + urllib.parse.urlencode({"q": "领星 API 鉴权", "limit": "1"})
+        search_route = "/search?" + urllib.parse.urlencode({"q": "API 令牌刷新", "limit": "1"})
         unauthorized_read, _ = http_get(port, search_route)
         assert unauthorized_read == 401
         search_status, search = http_get(port, search_route, token="acceptance-token")
@@ -777,7 +779,7 @@ def test_mcp_role_profiles() -> None:
     compiler = mcp_exchange("codex", [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "km_search", "arguments": {"query": "领星 API 鉴权", "limit": 1}}},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "km_search", "arguments": {"query": "API 令牌刷新", "limit": 1}}},
         {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "km_propose_capture", "arguments": {"title": "MCP 来源验收", "value_reason": "验证来源身份", "dry_run": True}}},
     ])
     compiler_tools = compiler[1]["result"]["tools"]
