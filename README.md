@@ -16,10 +16,20 @@ Vault        -> user-owned knowledge data
 `adapters/mcp` are compatibility launchers for old source-checkout workflows;
 they contain no business logic.
 
+## User Guides
+
+Start with the [AgentsKM 0.5.1 guide index](docs/guides/README.md). It separates
+installation, acceptance, daily use, updates, and troubleshooting for:
+
+- Codex Marketplace plugin users;
+- Hermes, Claude, Cursor, and other stdio MCP hosts;
+- direct CLI and automation users;
+- Toolkit maintainers and release operators.
+
 ## Codex Plugin
 
-After the matching `0.5.1` runtime is published, install the official GitHub
-Marketplace source and plugin:
+Install the official GitHub Marketplace source and plugin. The current plugin
+resolves the published `0.5.1` runtime from PyPI:
 
 ```powershell
 codex plugin marketplace add redballoom/agentskm-toolkit --ref main
@@ -78,6 +88,6 @@ python scripts/build_plugin.py --check
 python tests/acceptance/test_km_workflow.py
 ```
 
-Acceptance tests write only to temporary Vaults. The `0.5.1` plugin pin must not
-be exposed through a stable Marketplace ref until production PyPI can install
-`agentskm-toolkit==0.5.1`.
+Acceptance tests write only to temporary Vaults. Before moving a stable
+Marketplace ref to a new release, confirm that its exact runtime pin is already
+installable from production PyPI.
