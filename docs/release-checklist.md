@@ -50,7 +50,7 @@ uvx --from "git+https://github.com/redballoom/agentskm-toolkit.git@<release-bran
 - Verify installation from TestPyPI:
 
 ```powershell
-uvx --isolated --no-cache --default-index https://test.pypi.org/simple/ --from agentskm-toolkit==0.5.1 agentskm --version
+uvx --isolated --no-cache --default-index https://test.pypi.org/simple/ --from agentskm-toolkit==0.5.2 agentskm --version
 ```
 
 ## Before Production PyPI
@@ -63,7 +63,7 @@ uvx --isolated --no-cache --default-index https://test.pypi.org/simple/ --from a
 - Verify production install:
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.1 agentskm --version
+uvx --from agentskm-toolkit==0.5.2 agentskm --version
 ```
 
 ## Codex Plugin Runtime
@@ -73,7 +73,7 @@ uvx --from agentskm-toolkit==0.5.1 agentskm --version
 ```json
 {
   "command": "uvx",
-  "args": ["--from", "agentskm-toolkit==0.5.1", "agentskm", "mcp"]
+  "args": ["--from", "agentskm-toolkit==0.5.2", "agentskm", "mcp"]
 }
 ```
 
@@ -81,7 +81,7 @@ uvx --from agentskm-toolkit==0.5.1 agentskm --version
 - Run `python scripts/build_plugin.py --check` and plugin schema validation.
 - Run plugin install and setup acceptance in Codex and at least one contributor
   host.
-- Do not move the stable Marketplace ref to the 0.5.1 plugin before production
+- Do not move the stable Marketplace ref to the 0.5.2 plugin before production
   PyPI can install the exact pin.
 
 ## Codex Marketplace Install

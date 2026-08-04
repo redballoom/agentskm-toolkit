@@ -8,7 +8,7 @@ Add this contributor server to Claude Code's MCP configuration:
     "agentskm": {
       "command": "uvx",
       "args": [
-        "--from", "agentskm-toolkit==0.5.1",
+        "--from", "agentskm-toolkit==0.5.2",
         "agentskm", "mcp",
         "--profile", "claude",
         "--host", "claude",

@@ -24,7 +24,7 @@ CLI = [sys.executable, "-m", "agentskm_toolkit"]
 HTTP_ADAPTER = ROOT / "adapters" / "http" / "km_http.py"
 MCP_CONFIG_RENDERER = ROOT / "scripts" / "render_mcp_config.py"
 PLUGIN = ROOT / "plugins" / "agentskm-toolkit"
-EXPECTED_VERSION = "0.5.1"
+EXPECTED_VERSION = "0.5.2"
 CONTRIBUTOR_TOOLS = {
     "km_setup_status", "km_doctor", "km_update", "km_status", "km_pending",
     "km_reminders", "km_search", "km_validate", "km_lint",

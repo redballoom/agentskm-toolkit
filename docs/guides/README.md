@@ -1,4 +1,4 @@
-# AgentsKM 0.5.1 使用指南
+# AgentsKM 0.5.2 使用指南
 
 AgentsKM 将多个 Agent 对话中可复用的结论先提交到公共 Inbox，再由具备权限的
 Profile 审核并写入 Wiki。知识文件保存在用户自己的 Vault 中，不随插件或 Python
@@ -70,7 +70,7 @@ Inbox 是待审核事实来源，Wiki 是已审核知识。不要让 Agent 直�
 
 每个新宿主至少完成以下检查：
 
-1. `km_doctor` 返回 `toolkit_version: 0.5.1` 和 `state: ready`。
+1. `km_doctor` 返回 `toolkit_version: 0.5.2` 和 `state: ready`。
 2. Profile、Role、Config path 和 Vault path 与预期一致。
 3. contributor 可以看到 `km_propose_capture`，看不到 review/promote/merge 工具。
 4. compiler 可以看到完整工具集。

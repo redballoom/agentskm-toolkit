@@ -9,21 +9,21 @@ CLI 是配置、权限、Vault、锁、事务、审计、Inbox 和 Wiki 操作�
 无需持久安装：
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.1 agentskm --version
-uvx --from agentskm-toolkit==0.5.1 agentskm --help
+uvx --from agentskm-toolkit==0.5.2 agentskm --version
+uvx --from agentskm-toolkit==0.5.2 agentskm --help
 ```
 
 需要经常在终端操作时，可以安装为 `uv` tool：
 
 ```powershell
-uv tool install agentskm-toolkit==0.5.1
+uv tool install agentskm-toolkit==0.5.2
 agentskm --version
 ```
 
 以下示例使用持久安装后的 `agentskm`。使用 `uvx` 时，只需在命令前替换为：
 
 ```text
-uvx --from agentskm-toolkit==0.5.1 agentskm
+uvx --from agentskm-toolkit==0.5.2 agentskm
 ```
 
 ## 2. Setup
