@@ -9,10 +9,10 @@ PyPI runtime。最终用户不需要克隆 Toolkit，也不需要全局安装 `a
 
 ```powershell
 uvx --version
-uvx --isolated --no-cache --from agentskm-toolkit==0.5.1 agentskm --version
+uvx --isolated --no-cache --from agentskm-toolkit==0.5.2 agentskm --version
 ```
 
-第二条命令预期输出 `0.5.1`。如果终端能找到 `uvx` 而桌面 Agent 找不到，应完全退出
+第二条命令预期输出 `0.5.2`。如果终端能找到 `uvx` 而桌面 Agent 找不到，应完全退出
 并重启 Agent，使其重新读取 `PATH`。
 
 ## 2. MCP 配置模板
@@ -25,7 +25,7 @@ Hermes：
     "agentskm": {
       "command": "uvx",
       "args": [
-        "--from", "agentskm-toolkit==0.5.1",
+        "--from", "agentskm-toolkit==0.5.2",
         "agentskm", "mcp",
         "--profile", "hermes-agent",
         "--host", "hermes",
@@ -44,7 +44,7 @@ Claude：
     "agentskm": {
       "command": "uvx",
       "args": [
-        "--from", "agentskm-toolkit==0.5.1",
+        "--from", "agentskm-toolkit==0.5.2",
         "agentskm", "mcp",
         "--profile", "claude",
         "--host", "claude",
@@ -63,7 +63,7 @@ Cursor 项目配置写入 `.cursor/mcp.json`：
     "agentskm": {
       "command": "uvx",
       "args": [
-        "--from", "agentskm-toolkit==0.5.1",
+        "--from", "agentskm-toolkit==0.5.2",
         "agentskm", "mcp",
         "--profile", "cursor",
         "--host", "cursor",
@@ -119,11 +119,11 @@ km_respond_candidate, km_propose_capture
 
 ```text
 请使用 km_propose_capture 创建一条真实 Inbox 候选，dry_run=false：
-- title: AgentsKM Hermes 0.5.1 验收
+- title: AgentsKM Hermes 0.5.2 验收
 - type: note
 - value_reason: 验证 Hermes contributor 可以向公共 Inbox 提交候选，但不能直接写入 Wiki
 - body: Hermes 作为 contributor，应能提出知识沉淀候选，并由 reviewer/compiler 后续审核、晋升或合并。
-- source_session: hermes-0.5.1-acceptance
+- source_session: hermes-0.5.2-acceptance
 - agent_id: hermes-agent
 - source_tool: hermes-mcp
 
@@ -153,7 +153,7 @@ contributor 不审核、不晋升、不合并 Wiki。
 迁移到其他电脑时，先把用户选择的 Vault 放到目标位置，再通过 CLI Setup 指定路径：
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.1 agentskm setup `
+uvx --from agentskm-toolkit==0.5.2 agentskm setup `
   --profile hermes-agent --host hermes --role contributor `
   --vault-name main --vault "D:\Knowledge\AgentsKM\vault"
 ```
@@ -164,7 +164,7 @@ uvx --from agentskm-toolkit==0.5.1 agentskm setup `
 
 其他 Agent 的版本由 MCP 配置中的 PyPI pin 决定。发布新版本后：
 
-1. 将 `agentskm-toolkit==0.5.1` 改为已验收的新版本。
+1. 将 `agentskm-toolkit==0.5.2` 改为已验收的新版本。
 2. 完全重连 MCP 或开启新会话。
 3. 调用 `km_doctor` 确认实际加载版本。
 4. 重新检查 contributor 工具边界。

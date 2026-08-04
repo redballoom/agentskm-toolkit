@@ -6,7 +6,7 @@ Codex installs the GitHub Marketplace plugin. Other Agent hosts register the
 same pinned PyPI runtime as a stdio MCP server:
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.1 agentskm mcp `
+uvx --from agentskm-toolkit==0.5.2 agentskm mcp `
   --profile hermes-agent --host hermes --bootstrap-role contributor
 ```
 
@@ -27,7 +27,7 @@ MCP so the host receives the correct fixed tool list.
 Diagnose through MCP with `km_doctor`, or in a recovery terminal:
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.1 agentskm doctor --profile codex
+uvx --from agentskm-toolkit==0.5.2 agentskm doctor --profile codex
 ```
 
 ## Daily Workflow

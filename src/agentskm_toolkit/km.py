@@ -77,19 +77,6 @@ ACTIVE_INBOX = {
     "duplicate",
 }
 ROLE_ORDER = {"contributor": 1, "reviewer": 2, "compiler": 3}
-EXAMPLE_WIKILINKS = {
-    "excel-to-web-form-automation",
-    "shadow-dom-element-scraping",
-    "wikilinks",
-}
-LINT_REFERENCE_DOCS = {
-    "docs/AgentsKM-P0-基线盘点报告.md",
-}
-QMD_READINESS_QUERIES = [
-    "领星 API 怎么鉴权",
-    "WSL 如何连接 Windows Chrome CDP",
-    "Docsify API 提取方法论",
-]
 QUERY_STOPWORDS = {
     "怎么", "如何", "怎样", "请问", "请", "一下", "什么", "为什么", "是否",
     "可以", "能否", "如何连接", "怎么连接",
@@ -610,12 +597,8 @@ def command_lint(args: argparse.Namespace) -> int:
     known = build_known_targets(pages)
     issues: list[str] = []
     for page in pages:
-        if page.rel in LINT_REFERENCE_DOCS:
-            continue
         for target in re.findall(r"\[\[([^\]|#]+)", page.text):
             normalized = normalize_target(target)
-            if page.rel in {"purpose.md", "SCHEMA.md", "docs/AgentsKM-架构改造执行计划.md"} and normalized in EXAMPLE_WIKILINKS:
-                continue
             if normalized not in known:
                 issues.append(f"{page.rel}: broken wikilink [[{target}]]")
     root_concepts = ROOT / "concepts"
@@ -1179,7 +1162,11 @@ def command_qmd_readiness(args: argparse.Namespace) -> int:
             "top5_hit_rate": 0.90,
         },
     }
-    query_results = [qmd_query_result(query) for query in QMD_READINESS_QUERIES]
+    benchmark_queries = [
+        page.title for page in sorted(wiki, key=lambda item: item.rel)
+        if page.title.strip()
+    ][:3]
+    query_results = [qmd_query_result(query) for query in benchmark_queries]
     top5_hit_rate = sum(1 for item in query_results if item["hit"]) / max(len(query_results), 1)
     ready = (
         index["qmd_available"]
@@ -1270,10 +1257,10 @@ def render_dashboard(pages: list[Page]) -> str:
         "## 操作入口",
         "",
         "```powershell",
-        "python tools\\km-cli\\km.py pending",
-        "python tools\\km-cli\\km.py search \"领星 API 鉴权\"",
-        "python tools\\km-cli\\km.py validate",
-        "python tools\\km-cli\\km.py lint",
+        "agentskm pending --profile <reviewer-profile>",
+        "agentskm search \"<topic>\" --profile <reviewer-profile>",
+        "agentskm validate --profile <reviewer-profile>",
+        "agentskm lint --profile <reviewer-profile>",
         "```",
         "",
     ])

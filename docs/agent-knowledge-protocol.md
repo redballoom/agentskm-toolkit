@@ -1,7 +1,7 @@
 # Agent Knowledge Protocol
 
-> 版本：v0.2
-> 日期：2026-07-27
+> 版本：v0.5.2
+> 日期：2026-08-04
 > 适用范围：Codex、Claude Code、Cursor、HermesBot、影刀及其他接入 AgentsKM 的 Agent  
 > 核心原则：Agent 可以自动发现和提交候选；正式 Wiki 写入必须经过用户批准或预授权规则
 
@@ -9,11 +9,12 @@
 
 | 角色 | 允许操作 | 禁止操作 |
 |---|---|---|
-| 贡献者 Agent | 搜索 Wiki/Inbox/Raw；通过 `km propose` 提交候选 | 审批、毕业、合并或直接编辑 Markdown |
-| 审核者 Agent | 贡献者能力；记录提醒、批准、稍后和忽略决定 | 写入正式 Wiki |
-| 编译者 Agent | 审核者能力；在批准范围内毕业或合并候选 | 扩大用户批准范围；保存敏感凭证 |
-| 巡检者 Agent | 检查断链、重复、过时、来源缺失；生成报告 | 默认不自动改正式知识 |
-| 用户 | 批准毕业、拒绝、暂缓、仲裁冲突、修改宪法级规则 | 无 |
+| 贡献者 Agent | 搜索；提交候选；记录用户的沉淀、稍后和忽略选择 | 审核、毕业、合并或直接编辑 Markdown |
+| 审核者 Agent | 贡献者能力；审核、暂缓、拒绝候选；生成 Dashboard | 写入正式 Wiki |
+| 编译者 Agent | 审核者能力；在明确批准范围内毕业或合并候选 | 扩大用户批准范围；保存敏感凭证 |
+
+用户不是运行时 Profile 角色。用户负责决定是否沉淀、批准范围和冲突仲裁；CLI 通过
+`responded_by`、`reviewed_by`、`approved_by` 和 `scope` 保存相应审计信息。
 
 ## 2. 知识分层
 
@@ -22,7 +23,7 @@
 | Raw | `raw/` | 原始资料、网页、日志、测试证据；尽量不可变 |
 | Inbox | `000_Inbox/` | Agent 自动捕获的候选知识；未审核或审核记录 |
 | Wiki | `wiki/` | 已审核、去重、建立链接的正式知识 |
-| Docs | `docs/` | 架构计划、协议、操作手册、ADR |
+| Docs | `docs/` | 当前架构、协议、操作手册和 ADR |
 
 默认查询顺序：
 
@@ -84,12 +85,16 @@ fingerprint: sha256-of-normalized-topic-and-claims
 ```text
 pending
   -> reminded
-    -> approved -> graduated | merged
-    -> snoozed -> reminded
-    -> rejected
+  -> snoozed -> reminded
+  -> rejected
+  -> approved -> graduated | merged
   -> duplicate -> merged | rejected
-  -> pending-source-review
+pending-source-review -> reminded | approved | snoozed | rejected
 ```
+
+用户意向和质量审核分别记录。贡献者执行 `respond --decision capture` 时，候选保持
+`reminded`，同时写入 `user_decision: capture` 和下一所需角色；只有 reviewer/compiler
+执行 `review --decision approve` 才会进入 `approved`。
 
 状态含义：
 
@@ -97,7 +102,7 @@ pending
 |---|---|
 | `pending` | 已捕获，尚未提醒 |
 | `reminded` | 已向用户提醒 |
-| `approved` | 用户已批准毕业或合并 |
+| `approved` | reviewer/compiler 已完成质量审核，允许进入编译步骤 |
 | `graduated` | 已创建正式 Wiki 页 |
 | `merged` | 已合并到现有 Wiki 页 |
 | `snoozed` | 暂缓处理；到 `snoozed_until` 后由 `km reminders` 再次返回 |
@@ -125,7 +130,8 @@ Agent 提醒用户时使用这个最小格式：
 从 Inbox 到 Wiki 必须满足：
 
 - 候选状态已经通过 `km review --decision approve` 进入 `approved`。
-- 用户明确批准，或命中用户提前授权的具体自动化规则。
+- 用户明确批准，或命中用户提前授权的具体规则；编译命令必须记录
+  `approved_by` 和本次 `scope`。
 - `source_refs` 至少有一项；纯对话知识使用 `conversation:<task-or-session-id>`。
 - 不包含密钥、token、客户隐私、个人敏感信息。
 - 目标路径位于 `wiki/entities/`、`wiki/concepts/`、`wiki/comparisons/` 或 `wiki/queries/`。
@@ -160,12 +166,12 @@ KM CLI 完成后：
 
 ## 9. 当前默认策略
 
-截至 2026-07-25：
+截至 0.5.2：
 
-- Codex 插件默认是可信的本机编译者；其 Skill 必须先询问用户再批准和毕业。
-- Claude Code、Cursor 和其他新接入 Agent 默认使用贡献者角色。
-- `lingxing-api-auth.md` 已批准毕业。
-- `wsl-chrome-cdp-setup.md` 已批准毕业。
-- `ai-agent-platform-comparison-2025.md` 暂缓毕业，需补来源。
-- 根目录 `concepts/` 不再作为正式知识目录；正式概念页进入 `wiki/concepts/`。
-- Obsidian 审核入口为 `docs/review-dashboard.md`，通过 `km dashboard` 刷新。
+- Codex 官方插件使用可信本机 `codex / compiler` Profile，但仍需遵守用户批准范围。
+- Hermes、Claude、Cursor 和其他新接入 Agent 默认使用独立 contributor Profile。
+- 所有 Profile 通过用户配置引用 Vault；不使用环境变量选择 Vault。
+- 同一 Vault 的 Inbox 是公共队列，每条候选必须保留 Agent 和会话来源。
+- 正式页面只进入 `wiki/`，根目录不保留第二套正式知识层。
+- Obsidian 审核入口由 `km dashboard` 生成；Markdown frontmatter 仍是唯一状态来源。
+- qmd 仅在 readiness 阈值满足后启用，默认继续使用无缓存的基础搜索。

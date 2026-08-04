@@ -21,6 +21,10 @@ FORBIDDEN_PARTS = {
     "raw",
 }
 FORBIDDEN_SUFFIXES = {".pyc", ".p12", ".pfx", ".pem", ".key"}
+FORBIDDEN_PATHS = {
+    "docs/qmd-readiness.md",
+    "docs/review-dashboard.md",
+}
 SECRET_PATTERNS = {
     "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     "GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9]{30,}\b"),
@@ -42,9 +46,16 @@ def tracked_files() -> list[Path]:
 def main() -> int:
     issues: list[str] = []
     for path in tracked_files():
+        if not path.exists():
+            continue
         rel = path.relative_to(ROOT)
-        if any(part in FORBIDDEN_PARTS for part in rel.parts) or path.suffix in FORBIDDEN_SUFFIXES:
-            issues.append(f"forbidden tracked path: {rel.as_posix()}")
+        rel_posix = rel.as_posix()
+        if (
+            rel_posix in FORBIDDEN_PATHS
+            or any(part in FORBIDDEN_PARTS for part in rel.parts)
+            or path.suffix in FORBIDDEN_SUFFIXES
+        ):
+            issues.append(f"forbidden tracked path: {rel_posix}")
             continue
         try:
             text = path.read_text(encoding="utf-8")

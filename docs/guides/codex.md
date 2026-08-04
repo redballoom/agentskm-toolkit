@@ -2,7 +2,7 @@
 
 Codex 用户通过官方 GitHub Marketplace 安装轻量插件。插件提供 AgentsKM Skill、
 Codex 命令描述和 MCP 注册；真正的 CLI/MCP runtime 由 `uvx` 从 PyPI 获取固定版本
-`agentskm-toolkit==0.5.1`。
+`agentskm-toolkit==0.5.2`。
 
 ## 1. 安装前检查
 
@@ -25,7 +25,7 @@ codex plugin marketplace add redballoom/agentskm-toolkit --ref main
 codex plugin add agentskm-toolkit@agentskm-official
 ```
 
-预期安装来源名称为 `agentskm-official`，插件版本为 `0.5.1`。安装完成后开启一个新
+预期安装来源名称为 `agentskm-official`，插件版本为 `0.5.2`。安装完成后开启一个新
 Codex 会话，让宿主启动新 MCP 连接。
 
 ## 3. 首次只读验收
@@ -43,7 +43,7 @@ Codex 会话，让宿主启动新 MCP 连接。
 默认预期：
 
 ```text
-Toolkit version: 0.5.1
+Toolkit version: 0.5.2
 Profile: codex
 Role: compiler
 State: ready
@@ -84,11 +84,11 @@ Wiki 页面，或合并到现有页面。敏感信息、凭证、未经验证的
 
 ```text
 请使用 km_propose_capture 创建一条真实候选，dry_run=false：
-- title: AgentsKM Codex 0.5.1 验收
+- title: AgentsKM Codex 0.5.2 验收
 - type: note
 - value_reason: 验证 Codex 插件可以通过官方 PyPI runtime 写入公共 Inbox
 - body: Codex 官方插件应通过 MCP 调用受权限控制的 CLI，将候选写入用户配置指定的 Vault。
-- source_session: codex-0.5.1-acceptance
+- source_session: codex-0.5.2-acceptance
 - agent_id: codex
 - source_tool: codex-plugin
 

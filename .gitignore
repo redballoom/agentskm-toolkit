@@ -6,6 +6,8 @@ raw/
 wiki/
 index.md
 log.md
+docs/review-dashboard.md
+docs/qmd-readiness.md
 
 # Keep the repository marketplace manifest only
 .agents/*
