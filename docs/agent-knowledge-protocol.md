@@ -1,6 +1,6 @@
 # Agent Knowledge Protocol
 
-> 版本：v0.5.2
+> 版本：v0.5.3
 > 日期：2026-08-04
 > 适用范围：Codex、Claude Code、Cursor、HermesBot、影刀及其他接入 AgentsKM 的 Agent  
 > 核心原则：Agent 可以自动发现和提交候选；正式 Wiki 写入必须经过用户批准或预授权规则
@@ -166,7 +166,7 @@ KM CLI 完成后：
 
 ## 9. 当前默认策略
 
-截至 0.5.2：
+截至 0.5.3：
 
 - Codex 官方插件使用可信本机 `codex / compiler` Profile，但仍需遵守用户批准范围。
 - Hermes、Claude、Cursor 和其他新接入 Agent 默认使用独立 contributor Profile。

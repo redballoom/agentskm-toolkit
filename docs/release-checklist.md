@@ -50,7 +50,7 @@ uvx --from "git+https://github.com/redballoom/agentskm-toolkit.git@<release-bran
 - Verify installation from TestPyPI:
 
 ```powershell
-uvx --isolated --no-cache --default-index https://test.pypi.org/simple/ --from agentskm-toolkit==0.5.2 agentskm --version
+uvx --isolated --no-cache --default-index https://test.pypi.org/simple/ --from agentskm-toolkit==0.5.3 agentskm --version
 ```
 
 ## Before Production PyPI
@@ -63,7 +63,7 @@ uvx --isolated --no-cache --default-index https://test.pypi.org/simple/ --from a
 - Verify production install:
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.2 agentskm --version
+uvx --from agentskm-toolkit==0.5.3 agentskm --version
 ```
 
 ## Codex Plugin Runtime
@@ -73,7 +73,7 @@ uvx --from agentskm-toolkit==0.5.2 agentskm --version
 ```json
 {
   "command": "uvx",
-  "args": ["--from", "agentskm-toolkit==0.5.2", "agentskm", "mcp"]
+  "args": ["--from", "agentskm-toolkit==0.5.3", "agentskm", "mcp"]
 }
 ```
 
@@ -81,7 +81,7 @@ uvx --from agentskm-toolkit==0.5.2 agentskm --version
 - Run `python scripts/build_plugin.py --check` and plugin schema validation.
 - Run plugin install and setup acceptance in Codex and at least one contributor
   host.
-- Do not move the stable Marketplace ref to the 0.5.2 plugin before production
+- Do not move the stable Marketplace ref to the 0.5.3 plugin before production
   PyPI can install the exact pin.
 
 ## Codex Marketplace Install
@@ -93,3 +93,19 @@ sparse path:
 codex plugin marketplace add redballoom/agentskm-toolkit --ref main
 codex plugin add agentskm-toolkit@agentskm-official
 ```
+
+## Local Codex Pre-Release Test
+
+Before the exact package version is available on PyPI, build an ignored local
+marketplace whose MCP entry points at the current wheel:
+
+```powershell
+python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist
+python scripts\build_local_codex_marketplace.py
+codex plugin marketplace add .\build\local-codex-marketplace
+codex plugin add agentskm-toolkit@agentskm-local
+```
+
+Fully restart Codex and start a new conversation before testing Skill triggers
+or the role-filtered MCP tool list. The generated marketplace lives under
+ignored `build/`; never publish its machine-specific wheel path.

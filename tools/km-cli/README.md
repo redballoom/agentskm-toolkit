@@ -14,7 +14,7 @@ agentskm search "topic" --profile codex
 For install-on-use hosts:
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.2 agentskm --help
+uvx --from agentskm-toolkit==0.5.3 agentskm --help
 ```
 
 The CLI remains the only implementation for config, Profile roles, Vault

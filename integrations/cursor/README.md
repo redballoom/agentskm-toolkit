@@ -8,7 +8,7 @@ Add a contributor server to `.cursor/mcp.json`:
     "agentskm": {
       "command": "uvx",
       "args": [
-        "--from", "agentskm-toolkit==0.5.2",
+        "--from", "agentskm-toolkit==0.5.3",
         "agentskm", "mcp",
         "--profile", "cursor",
         "--host", "cursor",

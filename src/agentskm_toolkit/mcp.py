@@ -115,12 +115,20 @@ def handle_message(message: dict[str, Any]) -> None:
         try:
             send_result(request_id, call_tool(tool_name, arguments))
         except (FileExistsError, FileNotFoundError, PermissionError, RuntimeError, ValueError) as exc:
+            required_role = mcp_required_role(exc)
             payload = {
                 "ok": False,
                 "error": str(exc),
                 "error_type": exc.__class__.__name__,
-                "next_action": "run_km_doctor",
+                "blocker_code": mcp_blocker_code(exc),
+                "next_action": (
+                    "use_profile_with_required_role_or_reconnect"
+                    if required_role
+                    else "run_km_doctor"
+                ),
             }
+            if required_role:
+                payload["next_required_role"] = required_role
             send_result(request_id, tool_payload(payload, is_error=True))
         return
     send_error(request_id, -32601, f"Method not found: {method}")
@@ -198,7 +206,7 @@ def tools() -> list[dict[str, Any]]:
                 "decision": {"type": "string", "enum": ["remind", "capture", "snooze", "reject"]},
                 "responded_by": {"type": "string"},
                 "reason": {"type": "string"},
-                "until": {"type": "string", "description": "YYYY-MM-DD; required for snooze."},
+                "until": {"type": "string", "description": "YYYY-MM-DD; defaults to seven days from today for snooze."},
                 "dry_run": {"type": "boolean", "default": False},
             }, required=["candidate", "decision"]),
         },
@@ -212,7 +220,17 @@ def tools() -> list[dict[str, Any]]:
                 "type": {"type": "string", "enum": sorted(WIKI_DIRS), "default": "note"},
                 "tags": {"type": "string", "description": "Comma-separated tags without implicit-capture."},
                 "source_refs": {"type": "array", "items": {"type": "string"}},
-                "suggested_target": {"type": "string"},
+                "suggested_target": {
+                    "type": "string",
+                    "description": (
+                        "Optional complete Vault-relative Markdown path. Use "
+                        "wiki/entities/<slug>.md, wiki/concepts/<slug>.md, "
+                        "wiki/comparisons/<slug>.md, or wiki/queries/<slug>.md; "
+                        "include the wiki/ prefix. Example: "
+                        "wiki/concepts/project-state-space.md. Omit this field "
+                        "to derive a target from type and title."
+                    ),
+                },
                 "body": {"type": "string"},
                 "agent_id": {"type": "string", "default": "mcp-agent"},
                 "source_tool": {"type": "string", "default": "mcp"},
@@ -234,7 +252,7 @@ def tools() -> list[dict[str, Any]]:
                     "decision": {"type": "string", "enum": ["remind", "approve", "snooze", "reject"]},
                     "reviewed_by": {"type": "string"},
                     "reason": {"type": "string"},
-                    "until": {"type": "string", "description": "YYYY-MM-DD; required for snooze."},
+                    "until": {"type": "string", "description": "YYYY-MM-DD; defaults to seven days from today for snooze."},
                     "dry_run": {"type": "boolean", "default": False},
                 }, required=["candidate", "decision"]),
             },
@@ -359,17 +377,21 @@ def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return cli_result(build_propose_args(args))
     if name == "km_respond_candidate":
         return cli_result(build_respond_args(args))
-    if name == "km_review_candidate" and ROLE_ORDER[ROLE] >= ROLE_ORDER["reviewer"]:
+    if name == "km_review_candidate":
+        if ROLE_ORDER[ROLE] < ROLE_ORDER["reviewer"]:
+            raise PermissionError("Reviewer role is required")
         return cli_result(build_review_args(args))
     if name == "km_promote_candidate":
         if ROLE_ORDER[ROLE] < ROLE_ORDER["compiler"]:
-            raise ValueError("Compiler role is required")
+            raise PermissionError("Compiler role is required")
         return cli_result(build_promote_args(args))
     if name == "km_merge_candidate":
         if ROLE_ORDER[ROLE] < ROLE_ORDER["compiler"]:
-            raise ValueError("Compiler role is required")
+            raise PermissionError("Compiler role is required")
         return cli_result(build_merge_args(args))
     if name == "km_dashboard":
+        if ROLE_ORDER[ROLE] < ROLE_ORDER["reviewer"]:
+            raise PermissionError("Reviewer role is required")
         return cli_result(build_dashboard_args(args))
     raise ValueError(f"Unknown tool: {name}")
 
@@ -393,6 +415,17 @@ def cli_result(cli_args: list[str]) -> dict[str, Any]:
         capture_output=True,
     )
     payload = parse_cli_json(proc.stdout, proc.stderr)
+    if payload.get("blocker_code") == "role_required" and not payload.get("next_required_role"):
+        required_role = {
+            "review": "reviewer",
+            "dashboard": "reviewer",
+            "qmd-readiness": "reviewer",
+            "promote": "compiler",
+            "merge": "compiler",
+        }.get(command)
+        if required_role:
+            payload["next_required_role"] = required_role
+            payload["next_action"] = "use_profile_with_required_role_or_reconnect"
     is_error = proc.returncode != 0 or not bool(payload.get("ok", False))
     return tool_payload(payload, is_error=is_error)
 
@@ -435,8 +468,37 @@ def parse_cli_json(stdout: str, stderr: str) -> dict[str, Any]:
         "ok": False,
         "error": (stderr or stdout or "KM CLI returned no output").strip(),
         "error_type": "CliProtocolError",
+        "blocker_code": "cli_protocol_error",
         "next_action": "run_km_doctor",
     }
+
+
+def mcp_blocker_code(exc: Exception) -> str:
+    message = str(exc).casefold()
+    if mcp_required_role(exc):
+        return "role_required"
+    if "unknown tool" in message:
+        return "tool_unavailable"
+    if "bootstrap mode" in message or "setup" in message:
+        return "setup_required"
+    if "target" in message and "exist" in message:
+        return "target_exists_conflict"
+    if "sensitive" in message or "secret" in message:
+        return "sensitive_content_blocked"
+    if isinstance(exc, FileNotFoundError):
+        return "path_not_found"
+    if isinstance(exc, FileExistsError):
+        return "write_conflict"
+    return "runtime_error"
+
+
+def mcp_required_role(exc: Exception) -> str | None:
+    message = str(exc).casefold()
+    if "compiler role" in message or "role=compiler" in message:
+        return "compiler"
+    if "reviewer role" in message or "role=reviewer" in message:
+        return "reviewer"
+    return None
 
 
 def build_propose_args(data: dict[str, Any]) -> list[str]:

@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import __version__
@@ -81,6 +81,32 @@ QUERY_STOPWORDS = {
     "怎么", "如何", "怎样", "请问", "请", "一下", "什么", "为什么", "是否",
     "可以", "能否", "如何连接", "怎么连接",
 }
+SECRET_PATTERNS = [
+    (
+        "private_key",
+        re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----", re.IGNORECASE),
+    ),
+    (
+        "bearer_token",
+        re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{30,}\b", re.IGNORECASE),
+    ),
+    (
+        "authorization_bearer_token",
+        re.compile(r"\bAuthorization\s*:\s*Bearer\s+[A-Za-z0-9._~+/=-]{20,}\b", re.IGNORECASE),
+    ),
+    (
+        "openai_api_key",
+        re.compile(r"\bsk-[A-Za-z0-9]{32,}\b"),
+    ),
+    (
+        "github_token",
+        re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{30,}\b"),
+    ),
+    (
+        "npm_token",
+        re.compile(r"\bnpm_[A-Za-z0-9]{30,}\b"),
+    ),
+]
 
 
 @dataclass
@@ -118,6 +144,18 @@ class Page:
         return "root"
 
 
+class SafetyBlockError(ValueError):
+    def __init__(self, reason: str, code: str) -> None:
+        super().__init__(reason)
+        self.blocker_code = code
+
+
+class InvalidWikiTargetError(ValueError):
+    blocker_code = "invalid_wiki_target"
+    accepted_format = "wiki/<entities|concepts|comparisons|queries>/<slug>.md"
+    example = "wiki/concepts/project-state-space.md"
+
+
 def page_summary(page: Page, snippet: str | None = None) -> dict[str, object]:
     data: dict[str, object] = {
         "path": page.rel,
@@ -150,14 +188,54 @@ def error_payload(exc: Exception) -> dict[str, object]:
         next_action = "verify_the_configured_path"
     elif isinstance(exc, FileExistsError):
         next_action = "retry_after_the_conflicting_operation_finishes"
+    elif isinstance(exc, InvalidWikiTargetError):
+        next_action = "provide_valid_wiki_target_or_omit_suggested_target"
     else:
         next_action = "run_agentskm_doctor"
-    return {
+    payload: dict[str, object] = {
         "ok": False,
         "error": message,
         "error_type": exc.__class__.__name__,
+        "blocker_code": blocker_code(exc),
         "next_action": next_action,
     }
+    if isinstance(exc, InvalidWikiTargetError):
+        payload["accepted_format"] = exc.accepted_format
+        payload["example"] = exc.example
+        payload["allowed_categories"] = sorted(set(WIKI_DIRS.values()))
+    return payload
+
+
+def blocker_code(exc: Exception) -> str:
+    if isinstance(exc, (SafetyBlockError, InvalidWikiTargetError)):
+        return exc.blocker_code
+    message = str(exc)
+    lowered = message.casefold()
+    if isinstance(exc, PermissionError) or "requires role=" in lowered:
+        return "role_required"
+    if "sensitivity=secret" in lowered or "sensitive content" in lowered:
+        return "sensitive_content_blocked"
+    if "without source_refs" in lowered:
+        return "source_refs_required"
+    if "must be approved" in lowered:
+        return "approval_required"
+    if "inside wiki categories" in lowered:
+        return "invalid_wiki_target"
+    if "target already exists" in lowered:
+        return "target_exists_conflict"
+    if "wiki target not found" in lowered:
+        return "wiki_target_not_found"
+    if "already terminal" in lowered:
+        return "candidate_terminal"
+    if "outside repository" in lowered:
+        return "path_outside_vault"
+    if "until" in lowered:
+        return "invalid_snooze_date"
+    if isinstance(exc, FileNotFoundError):
+        return "path_not_found"
+    if isinstance(exc, FileExistsError):
+        return "write_conflict"
+    return "runtime_error"
 
 
 def wants_json(args: argparse.Namespace) -> bool:
@@ -642,9 +720,15 @@ def command_propose(args: argparse.Namespace) -> int:
     role = require_role(args, "contributor", "propose")
     if args.sensitivity == "secret":
         raise ValueError("Refusing to persist a candidate with sensitivity=secret")
+    if args.suggested_target:
+        args.suggested_target = normalize_target_path(
+            args.suggested_target,
+            {"type": args.type, "title": args.title},
+        )
     source_refs = default_source_refs(args.source_ref or [], args.source_session)
     tags = unique(["implicit-capture", *parse_csv(args.tags)])
     body = load_body(args.body, args.body_file, args.title, args.value_reason)
+    assert_candidate_content_safe(args.title, args.value_reason, body)
     candidate_id = next_candidate_id()
     candidate_fingerprint = fingerprint(args.title, body, args.value_reason)
 
@@ -661,7 +745,11 @@ def command_propose(args: argparse.Namespace) -> int:
                 "duplicate": True,
                 "updated": updated,
                 "candidate": page_summary(duplicate),
+                "candidate_path": duplicate.rel,
+                "status": duplicate.status,
                 "fingerprint": candidate_fingerprint,
+                "next_action": "present_existing_candidate_or_merge_target",
+                "next_required_role": "user",
             })
             return 0
         print(f"Duplicate candidate fingerprint: {duplicate.rel}")
@@ -702,8 +790,12 @@ def command_propose(args: argparse.Namespace) -> int:
                 "ok": True,
                 "dry_run": True,
                 "candidate_path": rel,
+                "target": args.suggested_target,
+                "operation": "create_inbox_candidate",
                 "candidate": meta,
                 "content": content,
+                "next_action": "present_capture_prompt",
+                "next_required_role": "user",
             })
             return 0
         print(f"DRY RUN propose -> {rel}")
@@ -725,7 +817,11 @@ def command_propose(args: argparse.Namespace) -> int:
             "created": True,
             "candidate_path": rel,
             "status": status,
+            "target": args.suggested_target,
+            "operation": "create_inbox_candidate",
             "fingerprint": candidate_fingerprint,
+            "next_action": "present_capture_prompt",
+            "next_required_role": "user",
         })
         return 0
     print(f"Created candidate: {rel}")
@@ -770,13 +866,15 @@ def command_review(args: argparse.Namespace) -> int:
 
     decision = args.decision
     if decision == "approve":
+        _, candidate_body = split_frontmatter(candidate.text)
+        assert_candidate_content_safe(candidate.title, candidate.meta.get("value_reason", ""), candidate_body)
         if candidate.meta.get("sensitivity") == "secret":
             raise ValueError("Refusing to approve candidate with sensitivity=secret")
         if not meta_list(candidate.meta, "source_refs"):
             raise ValueError("Refusing to approve candidate without source_refs")
     if decision == "snooze":
         if not args.until:
-            raise ValueError("--until is required for decision=snooze")
+            args.until = (date.today() + timedelta(days=7)).isoformat()
         try:
             datetime.strptime(args.until, "%Y-%m-%d")
         except ValueError as exc:
@@ -817,6 +915,8 @@ def command_review(args: argparse.Namespace) -> int:
                 "dry_run": True,
                 "candidate_path": candidate.rel,
                 "status": updated["status"],
+                "next_action": next_action_for_review(decision),
+                "next_required_role": next_role_for_review(decision, role),
                 "content": content,
             })
             return 0
@@ -837,6 +937,9 @@ def command_review(args: argparse.Namespace) -> int:
             "ok": True,
             "candidate_path": candidate.rel,
             "status": updated["status"],
+            "next_action": next_action_for_review(decision),
+            "next_required_role": next_role_for_review(decision, role),
+            "snoozed_until": updated.get("snoozed_until", ""),
         })
         return 0
     print(f"Reviewed candidate: {candidate.rel} -> {updated['status']}")
@@ -852,7 +955,7 @@ def command_respond(args: argparse.Namespace) -> int:
     decision = args.decision
     if decision == "snooze":
         if not args.until:
-            raise ValueError("--until is required for decision=snooze")
+            args.until = (date.today() + timedelta(days=7)).isoformat()
         try:
             datetime.strptime(args.until, "%Y-%m-%d")
         except ValueError as exc:
@@ -898,6 +1001,10 @@ def command_respond(args: argparse.Namespace) -> int:
                 "candidate_path": candidate.rel,
                 "status": updated["status"],
                 "user_decision": decision,
+                "intent_status": intent_status_for_response(decision),
+                "next_action": next_action_for_response(decision),
+                "next_required_role": next_role_for_response(decision),
+                "snoozed_until": updated.get("snoozed_until", ""),
                 "content": content,
             })
             return 0
@@ -919,6 +1026,10 @@ def command_respond(args: argparse.Namespace) -> int:
             "candidate_path": candidate.rel,
             "status": updated["status"],
             "user_decision": decision,
+            "intent_status": intent_status_for_response(decision),
+            "next_action": next_action_for_response(decision),
+            "next_required_role": next_role_for_response(decision),
+            "snoozed_until": updated.get("snoozed_until", ""),
         })
         return 0
     print(f"Recorded response: {candidate.rel} -> {updated['status']}")
@@ -938,6 +1049,9 @@ def command_promote(args: argparse.Namespace) -> int:
                 "status": candidate.status,
                 "candidate": page_summary(candidate),
                 "target": target,
+                "operation": "already_terminal",
+                "next_action": "complete",
+                "next_required_role": None,
             })
             return 0
         if target:
@@ -953,6 +1067,8 @@ def command_promote(args: argparse.Namespace) -> int:
     if not source_refs:
         raise ValueError("Refusing to promote candidate without source_refs")
 
+    _, candidate_body = split_frontmatter(candidate.text)
+    assert_candidate_content_safe(candidate.title, candidate.meta.get("value_reason", ""), candidate_body)
     target_rel = normalize_target_path(args.target or candidate.meta.get("suggested_target", ""), candidate.meta)
     target_path = resolve_repo_path(target_rel)
     if target_path.exists():
@@ -963,15 +1079,18 @@ def command_promote(args: argparse.Namespace) -> int:
                 emit_json({
                     "ok": True,
                     "already_represented": True,
+                    "status": "graduated",
                     "candidate": page_summary(candidate),
                     "target": target_rel,
+                    "operation": "already_represented",
+                    "next_action": "complete",
+                    "next_required_role": None,
                 })
                 return 0
             print(f"Candidate already represented in wiki: {target_rel}")
             return 0
         raise FileExistsError(f"Target already exists: {target_rel}")
 
-    _, candidate_body = split_frontmatter(candidate.text)
     wiki_meta: dict[str, object] = {
         "title": args.title or candidate.title,
         "created": candidate.meta.get("created", today()),
@@ -1006,6 +1125,10 @@ def command_promote(args: argparse.Namespace) -> int:
                 "dry_run": True,
                 "candidate_path": candidate.rel,
                 "target": target_rel,
+                "status": "graduated",
+                "operation": "create_wiki_page",
+                "next_action": "complete",
+                "next_required_role": None,
                 "wiki_meta": wiki_meta,
                 "content": wiki_text,
             })
@@ -1025,7 +1148,11 @@ def command_promote(args: argparse.Namespace) -> int:
             "promoted": True,
             "candidate_path": candidate.rel,
             "target": target_rel,
+            "status": "graduated",
+            "operation": "create_wiki_page",
             "title": wiki_meta["title"],
+            "next_action": "complete",
+            "next_required_role": None,
         })
         return 0
     print(f"Promoted candidate: {candidate.rel} -> {target_rel}")
@@ -1043,6 +1170,8 @@ def command_merge(args: argparse.Namespace) -> int:
     if candidate.meta.get("sensitivity") == "secret":
         raise ValueError("Refusing to merge candidate with sensitivity=secret")
 
+    _, candidate_body = split_frontmatter(candidate.text)
+    assert_candidate_content_safe(candidate.title, candidate.meta.get("value_reason", ""), candidate_body)
     target_rel = normalize_target_path(args.target or candidate.meta.get("suggested_target", ""), candidate.meta)
     target = find_page_by_rel(target_rel)
     if not target or target.layer != "wiki":
@@ -1067,7 +1196,6 @@ def command_merge(args: argparse.Namespace) -> int:
         target_meta["origin_candidate"] = target.meta["origin_candidate"]
 
     _, target_body = split_frontmatter(target.text)
-    _, candidate_body = split_frontmatter(candidate.text)
     addition = strip_leading_title(candidate_body).strip()
     merged_body = target_body.rstrip()
     if addition and normalize_for_fingerprint(addition) not in normalize_for_fingerprint(target_body):
@@ -1093,6 +1221,10 @@ def command_merge(args: argparse.Namespace) -> int:
                 "dry_run": True,
                 "candidate_path": candidate.rel,
                 "target": target_rel,
+                "status": "merged",
+                "operation": "merge_wiki_page",
+                "next_action": "complete",
+                "next_required_role": None,
                 "content": target_text,
             })
             return 0
@@ -1115,6 +1247,10 @@ def command_merge(args: argparse.Namespace) -> int:
             "merged": True,
             "candidate_path": candidate.rel,
             "target": target_rel,
+            "status": "merged",
+            "operation": "merge_wiki_page",
+            "next_action": "complete",
+            "next_required_role": None,
         })
         return 0
     print(f"Merged candidate: {candidate.rel} -> {target_rel}")
@@ -1429,7 +1565,10 @@ def normalize_target_path(value: str, meta: dict[str, str]) -> str:
     resolved = resolve_repo_path(value)
     allowed_roots = [(ROOT / prefix).resolve() for prefix in set(WIKI_DIRS.values())]
     if not any(root in resolved.parents for root in allowed_roots):
-        raise ValueError(f"Target must be inside wiki categories: {value}")
+        raise InvalidWikiTargetError(
+            f"Invalid Wiki target: {value}. Use a Vault-relative Markdown path "
+            f"such as {InvalidWikiTargetError.example}, including the wiki/ prefix."
+        )
     return resolved.relative_to(ROOT.resolve()).as_posix()
 
 
@@ -1499,6 +1638,66 @@ def load_body(body: str | None, body_file: str | None, title: str, value_reason:
     if body:
         return body if body.startswith("# ") else f"# {title}\n\n{body}\n"
     return f"# {title}\n\n## 价值\n\n{value_reason}\n"
+
+
+def assert_candidate_content_safe(title: str, value_reason: str, body: str) -> None:
+    for field_name, value in (
+        ("title", title),
+        ("value_reason", value_reason),
+        ("body", body),
+    ):
+        for pattern_name, pattern in SECRET_PATTERNS:
+            if pattern.search(value):
+                raise SafetyBlockError(
+                    "Sensitive content detected in "
+                    f"{field_name} ({pattern_name}); the candidate was not written. "
+                    "Provide a sanitized version without credentials.",
+                    "sensitive_content_blocked",
+                )
+
+
+def next_action_for_response(decision: str) -> str:
+    return {
+        "remind": "await_user_decision",
+        "capture": "await_review",
+        "snooze": "wait_until_snoozed_until",
+        "reject": "complete",
+    }[decision]
+
+
+def intent_status_for_response(decision: str) -> str:
+    return {
+        "remind": "awaiting_user_decision",
+        "capture": "capture_requested",
+        "snooze": "snoozed",
+        "reject": "rejected",
+    }[decision]
+
+
+def next_role_for_response(decision: str) -> str | None:
+    return {
+        "remind": "user",
+        "capture": "reviewer-or-compiler",
+        "snooze": None,
+        "reject": None,
+    }[decision]
+
+
+def next_action_for_review(decision: str) -> str:
+    return {
+        "remind": "await_user_decision",
+        "approve": "promote_or_merge_candidate",
+        "snooze": "wait_until_snoozed_until",
+        "reject": "complete",
+    }[decision]
+
+
+def next_role_for_review(decision: str, role: str) -> str | None:
+    if decision == "approve":
+        return "compiler"
+    if decision == "remind":
+        return "user"
+    return None
 
 
 def strip_leading_title(body: str) -> str:

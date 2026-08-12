@@ -6,7 +6,7 @@ Codex installs the GitHub Marketplace plugin. Other Agent hosts register the
 same pinned PyPI runtime as a stdio MCP server:
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.2 agentskm mcp `
+uvx --from agentskm-toolkit==0.5.3 agentskm mcp `
   --profile hermes-agent --host hermes --bootstrap-role contributor
 ```
 
@@ -24,10 +24,14 @@ The config file is the only source for Vault paths and Profile roles. Do not
 use environment variables. After Setup, a role change, or an update, reconnect
 MCP so the host receives the correct fixed tool list.
 
+When opening the Vault in Obsidian, first use `km_doctor`, `km_status`, or the
+equivalent CLI command to resolve the selected Profile's `vault_path`. Do not
+copy a machine-specific path into product documentation or integration code.
+
 Diagnose through MCP with `km_doctor`, or in a recovery terminal:
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.2 agentskm doctor --profile codex
+uvx --from agentskm-toolkit==0.5.3 agentskm doctor --profile codex
 ```
 
 ## Daily Workflow

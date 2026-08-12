@@ -9,21 +9,21 @@ CLI 是配置、权限、Vault、锁、事务、审计、Inbox 和 Wiki 操作�
 无需持久安装：
 
 ```powershell
-uvx --from agentskm-toolkit==0.5.2 agentskm --version
-uvx --from agentskm-toolkit==0.5.2 agentskm --help
+uvx --from agentskm-toolkit==0.5.3 agentskm --version
+uvx --from agentskm-toolkit==0.5.3 agentskm --help
 ```
 
 需要经常在终端操作时，可以安装为 `uv` tool：
 
 ```powershell
-uv tool install agentskm-toolkit==0.5.2
+uv tool install agentskm-toolkit==0.5.3
 agentskm --version
 ```
 
 以下示例使用持久安装后的 `agentskm`。使用 `uvx` 时，只需在命令前替换为：
 
 ```text
-uvx --from agentskm-toolkit==0.5.2 agentskm
+uvx --from agentskm-toolkit==0.5.3 agentskm
 ```
 
 ## 2. Setup
@@ -131,6 +131,9 @@ reviewer 也可以选择 `snooze`、`reject` 或 `remind`，并可生成审核�
 ```powershell
 agentskm dashboard --profile km-reviewer
 ```
+
+Dashboard 写入当前 Profile 配置所指向 Vault 的 `docs/review-dashboard.md`，是按需生成的
+快照，不会在后台自动刷新。用 Obsidian 浏览时，参见 [Obsidian 指南](obsidian.md)。
 
 用户的“沉淀”意向不等于质量审核通过；两项状态应分别保留。
 个人工作流可以由 compiler 使用其内含的 reviewer 能力完成审核；需要职责分离时，再使用

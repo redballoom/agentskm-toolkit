@@ -18,7 +18,7 @@ they contain no business logic.
 
 ## User Guides
 
-Start with the [AgentsKM 0.5.2 guide index](docs/guides/README.md). It separates
+Start with the [AgentsKM 0.5.3 guide index](docs/guides/README.md). It separates
 installation, acceptance, daily use, updates, and troubleshooting for:
 
 - Codex Marketplace plugin users;
@@ -32,7 +32,7 @@ write-safety contract are documented in [Architecture](docs/architecture.md).
 ## Codex Plugin
 
 Install the official GitHub Marketplace source and plugin. The current plugin
-resolves the published `0.5.2` runtime from PyPI:
+resolves the published `0.5.3` runtime from PyPI:
 
 ```powershell
 codex plugin marketplace add redballoom/agentskm-toolkit --ref main
@@ -62,7 +62,7 @@ other MCP-capable hosts use the same runtime directly:
 
 ```text
 command: uvx
-args: --from agentskm-toolkit==0.5.2 agentskm mcp --profile <profile> --host <host> --bootstrap-role contributor
+args: --from agentskm-toolkit==0.5.3 agentskm mcp --profile <profile> --host <host> --bootstrap-role contributor
 ```
 
 Use `scripts/render_mcp_config.py` only as a source-repository convenience for

@@ -1,4 +1,4 @@
-# AgentsKM 0.5.2 使用指南
+# AgentsKM 0.5.3 使用指南
 
 AgentsKM 将多个 Agent 对话中可复用的结论先提交到公共 Inbox，再由具备权限的
 Profile 审核并写入 Wiki。知识文件保存在用户自己的 Vault 中，不随插件或 Python
@@ -11,6 +11,7 @@ Profile 审核并写入 Wiki。知识文件保存在用户自己的 Vault 中，
 | Codex 用户 | GitHub Marketplace 插件 | `codex` / `compiler` | [Codex 插件指南](codex.md) |
 | Hermes、Claude、Cursor 等 Agent | PyPI runtime + stdio MCP | 每个宿主独立 Profile / `contributor` | [通用 MCP 与多 Agent 指南](mcp-hosts.md) |
 | 终端或自动化脚本用户 | `uvx` 或 `uv tool install` | 显式选择 Profile | [CLI 指南](cli.md) |
+| Obsidian 用户 | 打开配置中解析出的 Vault | reviewer/compiler 手动刷新 Dashboard | [Obsidian 指南](obsidian.md) |
 | 仓库维护者 | 源码 checkout | 临时测试配置与 Vault | [维护与发布指南](maintainer.md) |
 
 最终用户只需要选择一种入口，不需要克隆 Toolkit 仓库。Codex 插件会注册 Skill 和
@@ -70,7 +71,7 @@ Inbox 是待审核事实来源，Wiki 是已审核知识。不要让 Agent 直�
 
 每个新宿主至少完成以下检查：
 
-1. `km_doctor` 返回 `toolkit_version: 0.5.2` 和 `state: ready`。
+1. `km_doctor` 返回 `toolkit_version: 0.5.3` 和 `state: ready`。
 2. Profile、Role、Config path 和 Vault path 与预期一致。
 3. contributor 可以看到 `km_propose_capture`，看不到 review/promote/merge 工具。
 4. compiler 可以看到完整工具集。

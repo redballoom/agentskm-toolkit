@@ -14,7 +14,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date
+from datetime import date, timedelta
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -24,7 +24,7 @@ CLI = [sys.executable, "-m", "agentskm_toolkit"]
 HTTP_ADAPTER = ROOT / "adapters" / "http" / "km_http.py"
 MCP_CONFIG_RENDERER = ROOT / "scripts" / "render_mcp_config.py"
 PLUGIN = ROOT / "plugins" / "agentskm-toolkit"
-EXPECTED_VERSION = "0.5.2"
+EXPECTED_VERSION = "0.5.3"
 CONTRIBUTOR_TOOLS = {
     "km_setup_status", "km_doctor", "km_update", "km_status", "km_pending",
     "km_reminders", "km_search", "km_validate", "km_lint",
@@ -508,7 +508,9 @@ def test_security_guardrails() -> None:
         "--json",
     ])
     assert traversal.returncode != 0
-    assert "inside wiki categories" in json.loads(traversal.stdout)["error"]
+    traversal_payload = json.loads(traversal.stdout)
+    assert traversal_payload["blocker_code"] == "invalid_wiki_target"
+    assert traversal_payload["example"] == "wiki/concepts/project-state-space.md"
 
     secret = run_process([
         *CLI, "propose",
@@ -520,6 +522,74 @@ def test_security_guardrails() -> None:
         "--json",
     ])
     assert secret.returncode != 0
+
+    invalid_guide_target = run_process([
+        *CLI, "propose",
+        "--profile", "hermes-agent",
+        "--config", str(TEST_CONFIG),
+        "--title", "Guide target category guard",
+        "--type", "guide",
+        "--suggested-target", "wiki/guides/unsupported.md",
+        "--value-reason", "验证候选阶段拒绝不受支持的 Wiki 目录",
+        "--source-session", "guide-target-guard",
+        "--json",
+    ])
+    assert invalid_guide_target.returncode != 0
+    invalid_target_payload = json.loads(invalid_guide_target.stdout)
+    assert invalid_target_payload["blocker_code"] == "invalid_wiki_target"
+    assert invalid_target_payload["next_action"] == "provide_valid_wiki_target_or_omit_suggested_target"
+    assert invalid_target_payload["accepted_format"] == "wiki/<entities|concepts|comparisons|queries>/<slug>.md"
+    assert invalid_target_payload["example"] == "wiki/concepts/project-state-space.md"
+    assert "wiki/queries" in invalid_target_payload["allowed_categories"]
+
+    missing_wiki_prefix = run_process([
+        *CLI, "propose",
+        "--profile", "hermes-agent",
+        "--config", str(TEST_CONFIG),
+        "--title", "Missing Wiki Prefix Guard",
+        "--type", "concept",
+        "--suggested-target", "concepts/project-state-space.md",
+        "--value-reason", "验证错误信息提供完整 target 格式",
+        "--source-session", "missing-wiki-prefix-guard",
+        "--json",
+    ])
+    assert missing_wiki_prefix.returncode != 0
+    missing_prefix_payload = json.loads(missing_wiki_prefix.stdout)
+    assert missing_prefix_payload["blocker_code"] == "invalid_wiki_target"
+    assert "including the wiki/ prefix" in missing_prefix_payload["error"]
+    assert missing_prefix_payload["example"] == "wiki/concepts/project-state-space.md"
+
+    inbox_before = {path.name for path in (TEST_VAULT / "000_Inbox").glob("*.md")}
+    fake_secret = "sk-" + "A" * 32
+    body_secret = run_process([
+        *CLI, "propose",
+        "--profile", "hermes-agent",
+        "--config", str(TEST_CONFIG),
+        "--title", "Body secret must not persist",
+        "--value-reason", "验证正文敏感内容拦截",
+        "--body", f"Do not store this credential: {fake_secret}",
+        "--source-session", "body-secret-guard",
+        "--json",
+    ])
+    assert body_secret.returncode != 0
+    body_secret_payload = json.loads(body_secret.stdout)
+    assert body_secret_payload["blocker_code"] == "sensitive_content_blocked"
+    assert "candidate was not written" in body_secret_payload["error"]
+    assert {path.name for path in (TEST_VAULT / "000_Inbox").glob("*.md")} == inbox_before
+    log_text = (TEST_VAULT / "log.md").read_text(encoding="utf-8") if (TEST_VAULT / "log.md").exists() else ""
+    assert fake_secret not in log_text
+
+    ordinary_token_text = run_km([
+        "propose",
+        "--profile", "hermes-agent",
+        "--title", "Token refresh terminology is safe",
+        "--value-reason", "验证普通 token refresh 技术描述不会误报",
+        "--body", "Document the token refresh flow without storing credential values.",
+        "--source-session", "ordinary-token-refresh",
+        "--json",
+    ])
+    assert ordinary_token_text["created"] is True
+    assert ordinary_token_text["operation"] == "create_inbox_candidate"
 
 
 def test_frontmatter_escaping() -> None:
@@ -580,10 +650,25 @@ def test_contributor_response_flow() -> None:
         "--json",
     ])
     assert captured["status"] == "reminded"
+    assert captured["intent_status"] == "capture_requested"
+    assert captured["candidate_path"] == candidate
+    assert captured["next_action"] == "await_review"
+    assert captured["next_required_role"] == "reviewer-or-compiler"
     text = (TEST_VAULT / candidate).read_text(encoding="utf-8")
     assert 'user_decision: "capture"' in text
     assert 'response_actor_role: "contributor"' in text
     assert 'next_required_role: "reviewer-or-compiler"' in text
+
+    snoozed = run_km([
+        "respond", candidate,
+        "--decision", "snooze",
+        "--responded-by", "acceptance-user",
+        "--profile", "hermes-agent",
+        "--json",
+    ])
+    assert snoozed["status"] == "snoozed"
+    assert snoozed["snoozed_until"] == (date.today() + timedelta(days=7)).isoformat()
+    assert snoozed["next_action"] == "wait_until_snoozed_until"
 
     proc = run_process([
         *CLI,
@@ -633,6 +718,7 @@ def test_review_and_promote_workflow() -> None:
         "--json",
     ])
     assert snoozed["status"] == "snoozed"
+    assert snoozed["snoozed_until"] == date.today().isoformat()
     assert any(item["path"] == candidate for item in run_km(["reminders", "--json"])["candidates"])
 
     approved = run_km([
@@ -654,6 +740,9 @@ def test_review_and_promote_workflow() -> None:
         "--json",
     ])
     assert promoted["promoted"] is True
+    assert promoted["status"] == "graduated"
+    assert promoted["operation"] == "create_wiki_page"
+    assert promoted["next_action"] == "complete"
     assert (TEST_VAULT / promoted["target"]).exists()
     assert "acceptance-capture-workflow.md" in (TEST_VAULT / "index.md").read_text(encoding="utf-8")
     assert 'status: "graduated"' in (TEST_VAULT / candidate).read_text(encoding="utf-8")
@@ -690,6 +779,9 @@ def test_merge_workflow() -> None:
         "--json",
     ])
     assert merged["merged"] is True
+    assert merged["status"] == "merged"
+    assert merged["operation"] == "merge_wiki_page"
+    assert merged["next_action"] == "complete"
     target_body = (TEST_VAULT / merged["target"]).read_text(encoding="utf-8")
     assert "调用方应在刷新令牌后重放一次失败请求" in target_body
     assert 'status: "merged"' in (TEST_VAULT / candidate).read_text(encoding="utf-8")
@@ -765,9 +857,39 @@ def test_mcp_role_profiles() -> None:
     contributor = mcp_exchange("hermes-agent", [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        {
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": {
+                "name": "km_propose_capture",
+                "arguments": {
+                    "title": "MCP body secret guard",
+                    "value_reason": "验证 MCP 敏感正文错误结构",
+                    "body": "credential: " + "sk-" + "B" * 32,
+                    "source_session": "mcp-body-secret",
+                },
+            },
+        },
+        {
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": {
+                "name": "km_promote_candidate",
+                "arguments": {
+                    "candidate": "000_Inbox/not-used.md",
+                    "approved_by": "acceptance-user",
+                    "scope": "permission response",
+                },
+            },
+        },
     ])
     contributor_names = {item["name"] for item in contributor[1]["result"]["tools"]}
     assert contributor_names == CONTRIBUTOR_TOOLS
+    sensitive_error = contributor[2]["result"]["structuredContent"]
+    assert contributor[2]["result"]["isError"] is True
+    assert sensitive_error["blocker_code"] == "sensitive_content_blocked"
+    role_error = contributor[3]["result"]["structuredContent"]
+    assert contributor[3]["result"]["isError"] is True
+    assert role_error["blocker_code"] == "role_required"
+    assert role_error["next_required_role"] == "compiler"
 
     reviewer = mcp_exchange("km-reviewer", [
         {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
@@ -790,6 +912,9 @@ def test_mcp_role_profiles() -> None:
     assert capture_type["enum"] == [
         "comparison", "concept", "entity", "guide", "note", "query", "summary",
     ]
+    target_description = capture_tool["inputSchema"]["properties"]["suggested_target"]["description"]
+    assert "include the wiki/ prefix" in target_description
+    assert "wiki/concepts/project-state-space.md" in target_description
     assert compiler[2]["result"]["structuredContent"]["matches"][0]["layer"] == "wiki"
     candidate = compiler[3]["result"]["structuredContent"]["candidate"]
     assert candidate["agent_id"] == "codex"

@@ -34,3 +34,18 @@ The CLI remains authoritative if a more precise state name is returned.
 Promotion and merge require explicit `approved_by` and `scope` values tied to
 the user's decision. Never graduate a pending candidate, invent approval, or
 reinterpret a general request as approval for an unrelated candidate.
+
+## Completion Reporting
+
+- A successful contributor capture ends at `000_Inbox/<candidate>.md`; report
+  that path and say that reviewer/compiler processing is pending.
+- A successful compiler promotion or merge reports the final `wiki/...md` path,
+  the returned `status`, and `operation` (`create_wiki_page` or
+  `merge_wiki_page`).
+- A snooze reports `snoozed_until`; when the user gives no date, use the
+  seven-day default. A rejection reports the retained Inbox path.
+- A missing role or tool is a boundary result, not a partial success. Explain
+  what is unavailable and which role or reconnect is required.
+- On a conflict, ambiguous target, missing evidence, or safety block, keep the
+  candidate in Inbox and report its path and machine-readable blocker when
+  available.
